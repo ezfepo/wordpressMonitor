@@ -1,0 +1,12 @@
+node_modules/
+package-lock.json
+reports/
+logs/
+.claude/logs/
+.claude/plans/
+.claude/tmp/
+Thumbs.db
+
+# Site inventory — contains real hosts/usernames/SSH credentials, never commit
+# See sites.json.example
+sites.json

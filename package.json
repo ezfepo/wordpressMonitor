@@ -1,0 +1,27 @@
+{
+  "name": "wpmon",
+  "version": "1.0.0",
+  "license": "MIT",
+  "author": "ezfepo",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=24.14"
+  },
+  "scripts": {
+    "prettier": "prettier --write .",
+    "wp:update": "node src/update-plugins.js",
+    "wp:check": "node src/update-plugins.js --dry-run",
+    "wp:check-ssh": "node src/check-ssh.js"
+  },
+  "dependencies": {
+    "ssh2": "^1.17.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.8.3"
+  },
+  "allowScripts": {
+    "cpu-features@0.0.10": true,
+    "ssh2@1.17.0": true
+  }
+}

@@ -1,0 +1,15 @@
+@echo off
+rem wpMon Update.bat — example desktop shortcut for running the update
+rem on demand. Copy this file anywhere (e.g. your Desktop), rename it to
+rem "wpMon Update.bat", and adjust REPO_DIR below to where you cloned
+rem this repo. Double-click to run.
+
+set "REPO_DIR=C:\path\to\wpMon"
+
+title wpMon Update
+powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO_DIR%\.claude\scripts\run-daily-update.ps1"
+echo.
+echo ============================================
+echo  Done. Exit code: %ERRORLEVEL%
+echo ============================================
+pause

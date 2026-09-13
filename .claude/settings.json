@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude_ai_Gmail__create_draft",
+      "mcp__claude_ai_Gmail__list_drafts",
+      "mcp__claude_ai_Gmail__label_thread",
+      "mcp__claude_ai_Gmail__list_labels"
+    ]
+  }
+}

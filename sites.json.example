@@ -1,0 +1,25 @@
+{
+  "sites": [
+    {
+      "name": "example-site",
+      "sshHost": "203.0.113.10",
+      "sshPort": 65002,
+      "sshUser": "u000000000",
+      "wpPath": "domains/example.com/public_html",
+      "sshPassword": "",
+      "excludePlugins": [],
+      "excludeThemes": []
+    },
+    {
+      "name": "example-site-with-key",
+      "sshHost": "203.0.113.10",
+      "sshPort": 65002,
+      "sshUser": "u000000000",
+      "wpPath": "domains/example2.com/public_html",
+      "sshKeyPath": "C:\\Users\\you\\.ssh\\id_ed25519",
+      "sshKeyPassphrase": "",
+      "excludePlugins": [],
+      "excludeThemes": []
+    }
+  ]
+}

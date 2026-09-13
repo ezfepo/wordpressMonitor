@@ -1,0 +1,15 @@
+@echo off
+rem wordpressMonitor Update.bat — example desktop shortcut for running the
+rem update on demand. Copy this file anywhere (e.g. your Desktop), rename
+rem it to "wordpressMonitor Update.bat", and adjust REPO_DIR below to where
+rem you cloned this repo. Double-click to run.
+
+set "REPO_DIR=C:\path\to\wordpressMonitor"
+
+title wordpressMonitor Update
+powershell -NoProfile -ExecutionPolicy Bypass -File "%REPO_DIR%\.claude\scripts\run-daily-update.ps1"
+echo.
+echo ============================================
+echo  Done. Exit code: %ERRORLEVEL%
+echo ============================================
+pause

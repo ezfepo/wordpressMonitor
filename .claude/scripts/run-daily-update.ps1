@@ -1,4 +1,4 @@
-# wpMon daily update — invoked by Windows Task Scheduler.
+# wordpressMonitor daily update — invoked by Windows Task Scheduler.
 #
 # Runs the /wp-update-plugins skill through the Claude Code CLI in headless
 # mode: it executes npm run wp:update, reads the report, and creates a Gmail

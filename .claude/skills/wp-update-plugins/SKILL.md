@@ -1,9 +1,9 @@
 ---
 name: wp-update-plugins
-description: Check and update WordPress plugins, themes and translations on all Hostinger-hosted sites listed in sites.json, then email a per-site report. Use when the user asks to update WordPress plugins, themes or translations, check for updates, or run the daily wpMon maintenance.
+description: Check and update WordPress plugins, themes and translations on all Hostinger-hosted sites listed in sites.json, then email a per-site report. Use when the user asks to update WordPress plugins, themes or translations, check for updates, or run the daily wordpressMonitor maintenance.
 ---
 
-# Update WordPress plugins, themes and translations (wpMon)
+# Update WordPress plugins, themes and translations (wordpressMonitor)
 
 Run the update workflow (plugins, themes and translation/language packs)
 against the sites configured in `sites.json`, then report the results by
@@ -25,7 +25,7 @@ email.
 4. Compose the email report and create a Gmail draft addressed to the
    maintainer's own Gmail address (the account the Gmail integration is
    authenticated as):
-   - Subject: `wpMon update report — <date>`
+   - Subject: `wordpressMonitor update report — <date>`
    - Body: per-site status covering all three categories — each updated
      plugin and theme with old → new version, each updated translation
      (core/plugin/theme + language), updates still available (dry run), and

@@ -1,6 +1,6 @@
-# wpMon
+# wordpressMonitor
 
-Keeps a fleet of WordPress sites up to date. wpMon connects to each site over
+Keeps a fleet of WordPress sites up to date. wordpressMonitor connects to each site over
 SSH and uses [WP-CLI](https://wp-cli.org/) to check and update plugins,
 themes, and translation/language packs — then writes a per-site Markdown +
 JSON report.
@@ -63,8 +63,8 @@ exits with code `1` if any site ended up in a non-OK state.
 drafts an email summary via the Gmail MCP integration (tagged with a
 `wordpress` Gmail label). Invoke it as `/wp-update-plugins` in a Claude Code
 session, or headlessly via `.claude/scripts/run-daily-update.ps1`, which logs
-each run to `.claude/logs/` (gitignored). `wpMon Update.bat.example` is a
-sample double-click shortcut for triggering that script on demand.
+each run to `.claude/logs/` (gitignored). `wordpressMonitor Update.bat.example`
+is a sample double-click shortcut for triggering that script on demand.
 
 ## How it works
 

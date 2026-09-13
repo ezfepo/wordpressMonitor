@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-wpMon maintains WordPress sites hosted on Hostinger. It updates WP plugins, themes and
+wordpressMonitor maintains WordPress sites hosted on Hostinger. It updates WP plugins, themes and
 translations (language packs) across all configured sites over SSH + WP-CLI. Node.js `>=24.14` is required (see
 `package.json`).
 

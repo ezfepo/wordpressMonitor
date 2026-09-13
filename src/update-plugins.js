@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * wpMon — WordPress updater for Hostinger-hosted sites.
+ * wordpressMonitor — WordPress updater for Hostinger-hosted sites.
  *
  * Reads sites.json, connects to each site over SSH and uses WP-CLI to
  * detect and (unless --dry-run) apply updates for:
@@ -485,7 +485,7 @@ function timestampSlug(date) {
 
 function buildMarkdownReport(results, options, timestamp) {
   const lines = [];
-  lines.push(`# wpMon update report — ${formatArgentinaTimestamp(timestamp)}`);
+  lines.push(`# wordpressMonitor update report — ${formatArgentinaTimestamp(timestamp)}`);
   lines.push('');
   lines.push(`Mode: ${options.dryRun ? 'dry run (check only)' : 'update'}`);
   lines.push('');
@@ -531,7 +531,7 @@ async function main() {
 
   const timestamp = new Date();
   console.log(
-    `wpMon: ${options.dryRun ? 'checking' : 'updating'} plugins, themes and translations on ${sites.length} site(s)...`
+    `wordpressMonitor: ${options.dryRun ? 'checking' : 'updating'} plugins, themes and translations on ${sites.length} site(s)...`
   );
 
   const results = [];
@@ -566,6 +566,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error(`wpMon error: ${err.message}`);
+  console.error(`wordpressMonitor error: ${err.message}`);
   process.exitCode = 1;
 });

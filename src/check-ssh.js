@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * wpMon — per-site SSH connectivity/auth validator.
+ * wordpressMonitor — per-site SSH connectivity/auth validator.
  *
  * Independent of WP-CLI: checks raw TCP reachability to host:port, then
  * attempts an SSH handshake + auth using the same credential resolution as
@@ -167,7 +167,7 @@ async function main() {
     }
   }
 
-  console.log(`wpMon: validating SSH connectivity for ${sites.length} site(s)...\n`);
+  console.log(`wordpressMonitor: validating SSH connectivity for ${sites.length} site(s)...\n`);
 
   const results = [];
   for (const site of sites) {
@@ -191,6 +191,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error(`wpMon check-ssh error: ${err.message}`);
+  console.error(`wordpressMonitor check-ssh error: ${err.message}`);
   process.exitCode = 1;
 });

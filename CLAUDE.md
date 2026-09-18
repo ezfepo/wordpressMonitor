@@ -39,7 +39,25 @@ the corresponding commands (e.g. how to run a single test).
   `sshKeyPassphrase`) per site. Never committed.
 - `.claude/skills/wp-update-plugins/` — on-demand entry point (`/wp-update-plugins`): runs
   the script, reads the newest report, drafts the report email via Gmail, and tags the
-  draft with the existing `wordpress` Gmail label.
+  draft with the existing `wordpress` Gmail label. It also has an **optional** step
+  (skipped silently if not set up — nothing else in the workflow depends on it): if the
+  Hostinger MCP connector is connected in the session, it checks each site's PHP version
+  against Hostinger's own available versions (`hosting_getPHPDetailsV1`, keyed by
+  `sshUser` as `username` and the domain folder from `wpPath`). This catches "a newer PHP
+  version is available" (matching hPanel's own notice), which the WP-CLI-based check in
+  `update-plugins.js` can't see, since that one only flags PHP below a fixed floor.
+  **When a newer version exists and no plugin/theme on that site was flagged by the
+  WP-CLI PHP compatibility check, the skill auto-applies it** via
+  `hosting_updatePHPVersionV1`, jumping straight to the highest supported version, with
+  no per-run confirmation — this is a standing, explicit user approval covering every
+  future run including headless/scheduled ones. A successful auto-applied bump is
+  reported as routine info in the email (like an auto-applied plugin/theme update), not
+  as an action-needed alert. If a plugin/theme was flagged, the update is skipped and
+  reported as an alert instead — that (plus a failed `hosting_updatePHPVersionV1` call)
+  is the only case where this step triggers the email's `[ACTION NEEDED]` prefix. This is
+  the one part of the workflow that changes live hosting config unattended; everything
+  else (plugins, themes, translations, core updates) stays either auto-applied-but-
+  reversible (WP-CLI update) or alert-only (core, and the WP-CLI PHP floor check).
 
 ## Running the update manually
 

@@ -41,17 +41,32 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $logFile = Join-Path $logDir "daily-update-$(Get-Date -Format 'yyyy-MM-dd-HHmmss').log"
 
 # Friendly labels for the tools this workflow actually uses, so progress
-# reads like a task list instead of raw tool/API names.
+# reads like a task list instead of raw tool/API names. Several Gmail calls
+# and repeated per-site Hostinger PHP-check calls collapse to one line each
+# (via $SuppressAfterFirst) so the log reads as one step, not a burst of near
+# -identical lines.
 $ToolLabels = @{
-  Bash                               = 'Running the update script'
-  Read                               = 'Reading the report'
-  ToolSearch                         = 'Loading Gmail tools'
-  mcp__claude_ai_Gmail__create_draft = 'Creating the email draft'
-  mcp__claude_ai_Gmail__list_drafts  = 'Looking up the draft'
-  mcp__claude_ai_Gmail__list_labels  = 'Looking up the "wordpress" label'
-  mcp__claude_ai_Gmail__label_thread = 'Tagging the draft'
-  mcp__claude_ai_Gmail__label_message = 'Tagging the draft'
+  Bash                                 = 'Running the update script'
+  Read                                 = 'Reading the report'
+  ToolSearch                           = 'Preparing the email report'
+  mcp__claude_ai_Gmail__create_draft   = 'Preparing the email report'
+  mcp__claude_ai_Gmail__list_drafts    = 'Preparing the email report'
+  mcp__claude_ai_Gmail__list_labels    = 'Preparing the email report'
+  mcp__claude_ai_Gmail__label_thread   = 'Preparing the email report'
+  mcp__claude_ai_Gmail__label_message  = 'Preparing the email report'
+  'mcp__claude_ai_Hostinger_Connector__hosting_getPHPDetailsV1'    = 'Checking PHP versions with Hostinger'
+  'mcp__claude_ai_Hostinger_Connector__hosting_updatePHPVersionV1' = 'Updating PHP versions with Hostinger'
 }
+
+# Labels in here print only the first time they're seen per run; repeats
+# (e.g. one Hostinger PHP check/update per site, several Gmail calls in a
+# row) are silently absorbed.
+$SuppressAfterFirst = @(
+  'Preparing the email report',
+  'Checking PHP versions with Hostinger',
+  'Updating PHP versions with Hostinger'
+)
+$SeenLabels = New-Object 'System.Collections.Generic.HashSet[string]'
 
 function Get-ToolLabel {
   param([string]$Name)
@@ -82,7 +97,14 @@ function Write-StreamEvent {
         if ($block.type -eq 'text' -and $block.text) {
           Write-Output $block.text
         } elseif ($block.type -eq 'tool_use') {
-          Write-Output "  - $(Get-ToolLabel $block.name)..."
+          $label = Get-ToolLabel $block.name
+          if ($SuppressAfterFirst -contains $label) {
+            if ($SeenLabels.Add($label)) {
+              Write-Output "  - $label..."
+            }
+          } else {
+            Write-Output "  - $label..."
+          }
         }
       }
     }

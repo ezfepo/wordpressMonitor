@@ -66,6 +66,22 @@ session, or headlessly via `.claude/scripts/run-daily-update.ps1`, which logs
 each run to `.claude/logs/` (gitignored). `wordpressMonitor Update.bat.example`
 is a sample double-click shortcut for triggering that script on demand.
 
+**Optional:** if the [Hostinger MCP connector](https://docs.hostinger.com/hostinger-connector/overview)
+is connected in the session, the skill also checks each site's PHP version
+against Hostinger's own list of available versions — this catches "a newer
+PHP version is available" (matching hPanel's own notice), which the
+WP-CLI-based PHP check below can't see. Nothing else in this workflow
+depends on the connector; this step is skipped silently if it isn't set up.
+
+When a newer version is available **and** no plugin/theme on that site was
+flagged by the WP-CLI PHP compatibility check, the skill auto-applies the PHP
+update via `hosting_updatePHPVersionV1` (jumping to the highest supported
+version) with no confirmation prompt — this runs unattended on every
+invocation, including headless/scheduled runs. A successful bump is reported
+as routine info in the email, not as something needing action. If a
+plugin/theme was flagged (or the update call itself fails), it's skipped and
+reported as an alert instead so it can be reviewed manually first.
+
 ## How it works
 
 `src/update-plugins.js` connects to each site over SSH ([`ssh2`](https://github.com/mscdex/ssh2))

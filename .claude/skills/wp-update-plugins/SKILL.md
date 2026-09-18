@@ -25,11 +25,20 @@ email.
 4. Compose the email report and create a Gmail draft addressed to the
    maintainer's own Gmail address (the account the Gmail integration is
    authenticated as):
-   - Subject: `wordpressMonitor update report — <date>`
-   - Body: per-site status covering all three categories — each updated
-     plugin and theme with old → new version, each updated translation
-     (core/plugin/theme + language), updates still available (dry run), and
-     any failures or unreachable sites with their error messages.
+   - Subject: `wordpressMonitor update report — <date>`. If any site has a
+     WordPress core update or a PHP compatibility alert, prefix it:
+     `[ACTION NEEDED] wordpressMonitor update report — <date>`.
+   - Body: lead with an "Action needed" section listing, per affected site:
+     any WordPress core update available (current → new version, update
+     type) and any PHP compatibility alert (current PHP version vs.
+     WordPress's recommended minimum, plus any plugin/theme whose "Requires
+     PHP" exceeds the site's PHP version) — neither is applied automatically
+     and both need manual review (core update via WP admin/WP-CLI, PHP
+     version via Hostinger hPanel). Then per-site status covering the three
+     auto-updated categories — each updated plugin and theme with old → new
+     version, each updated translation (core/plugin/theme + language),
+     updates still available (dry run), and any failures or unreachable
+     sites with their error messages.
    - After creating the draft, apply the `wordpress` Gmail label to it:
      `create_draft` returns a draft id and no separate message id, so use
      `list_drafts` (filter by the exact subject just used) to get the draft's

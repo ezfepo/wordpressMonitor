@@ -25,9 +25,14 @@ the corresponding commands (e.g. how to run a single test).
 - `src/update-plugins.js` — connects to each site over SSH (`ssh2`) and runs WP-CLI to
   detect and apply updates in three categories: plugins (`wp plugin list/update`), themes
   (`wp theme list/update`) and translations (`wp language core|plugin|theme list/update`,
-  with a re-check afterwards so unapplied translations are reported as remaining). One
-  site or category failing never aborts the others; exit code 1 signals at least one
-  non-ok site.
+  with a re-check afterwards so unapplied translations are reported as remaining). It also
+  checks (but never applies) WordPress core updates via `wp core check-update`, and PHP
+  compatibility (current PHP version vs. WordPress's recommended minimum, plus any
+  plugin/theme's `requires_php` exceeding it) via `wp cli info` + `wp plugin/theme list`.
+  If either check finds something, the site status becomes `attention-needed` and the
+  report/email flags it as an alert requiring manual action (core update, or a PHP version
+  bump in Hostinger hPanel). One site or category failing never aborts the others; exit
+  code 1 signals at least one non-ok site.
 - `sites.json` (gitignored, template in `sites.json.example`) — site inventory and
   credentials in one file: name, sshHost, sshPort, sshUser, wpPath, excludePlugins,
   excludeThemes, plus either `sshPassword` or `sshKeyPath` (+ optional

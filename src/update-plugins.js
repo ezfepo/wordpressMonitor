@@ -8,6 +8,9 @@
  *   - plugins       (wp plugin list / update)
  *   - themes        (wp theme list / update)
  *   - translations  (wp language core|plugin|theme list / update)
+ * WordPress core is only checked, never updated automatically (wp core
+ * check-update): a major/minor core upgrade needs manual review, so it's
+ * surfaced as an alert in the report instead.
  * Writes a JSON + Markdown report to reports/ and prints a console summary.
  *
  * Usage:
@@ -244,6 +247,112 @@ async function updateTranslations(conn, site) {
   }
 }
 
+// WordPress core updates are surfaced as an alert but never applied
+// automatically — they can involve breaking changes and deserve a manual
+// look. Returns null when core is up to date.
+async function checkCoreUpdate(conn, site) {
+  const cmd = wpCommand(site, 'core check-update --format=json');
+  const result = await execCommand(conn, cmd);
+  if (result.code !== 0) {
+    throw new Error(
+      `wp core check-update failed (exit ${result.code}): ${truncateOutput(result)}`
+    );
+  }
+  const updates = parseWpJson(result.stdout, 'core check-update');
+  if (updates.length === 0) {
+    return null;
+  }
+  const update = updates[0];
+  return {
+    version: update.version,
+    updateType: update.update_type || null,
+    packageUrl: update.package_url || null
+  };
+}
+
+// WordPress.org's current recommended minimum PHP version (see
+// https://wordpress.org/about/requirements/). Update this constant as
+// WordPress's official recommendation changes.
+const RECOMMENDED_PHP_VERSION = '8.1';
+
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) {
+      return diff > 0 ? 1 : -1;
+    }
+  }
+  return 0;
+}
+
+// Flags an outdated PHP version (like Hostinger's hPanel "better compatible
+// version found" notice) and any installed plugin/theme that declares a
+// "Requires PHP" higher than what's actually running. Never changes the PHP
+// version itself — that's a hosting-level change outside WP-CLI's reach.
+async function checkPhpCompatibility(conn, site) {
+  // Avoid `wp cli info`: it shells out internally (e.g. for git info) via
+  // proc_open/proc_close, which shared hosts like Hostinger disable for PHP.
+  // `wp eval` just reads the PHP_VERSION constant, no subprocess needed.
+  const versionResult = await execCommand(
+    conn,
+    wpCommand(site, `eval ${shellQuote('echo PHP_VERSION;')}`)
+  );
+  if (versionResult.code !== 0) {
+    throw new Error(
+      `wp eval (PHP_VERSION) failed (exit ${versionResult.code}): ${truncateOutput(versionResult)}`
+    );
+  }
+  const phpVersion = versionResult.stdout.trim();
+  if (!/^\d+(\.\d+)*$/.test(phpVersion)) {
+    throw new Error(
+      `Unexpected PHP_VERSION output: ${phpVersion.slice(0, 200)}`
+    );
+  }
+
+  const outdated = compareVersions(phpVersion, RECOMMENDED_PHP_VERSION) < 0;
+
+  const incompatibleItems = [];
+  for (const [kind, fields] of [
+    ['plugin', 'name,status,requires_php'],
+    ['theme', 'name,status,requires_php']
+  ]) {
+    const result = await execCommand(
+      conn,
+      wpCommand(site, `${kind} list --fields=${fields} --format=json`)
+    );
+    if (result.code !== 0) {
+      throw new Error(
+        `wp ${kind} list failed (exit ${result.code}): ${truncateOutput(result)}`
+      );
+    }
+    for (const row of parseWpJson(result.stdout, `${kind} list`)) {
+      if (
+        row.requires_php &&
+        compareVersions(phpVersion, row.requires_php) < 0
+      ) {
+        incompatibleItems.push({
+          kind,
+          name: row.name,
+          status: row.status,
+          requiresPhp: row.requires_php
+        });
+      }
+    }
+  }
+
+  if (!outdated && incompatibleItems.length === 0) {
+    return null;
+  }
+  return {
+    phpVersion,
+    recommendedPhpVersion: RECOMMENDED_PHP_VERSION,
+    outdated,
+    incompatibleItems
+  };
+}
+
 function emptySection() {
   return { available: [], updated: [], failed: [], excluded: [] };
 }
@@ -317,10 +426,13 @@ function computeStatus(result) {
   ) {
     return 'partial';
   }
+  if (result.coreUpdate || result.phpCompatibility) {
+    return 'attention-needed';
+  }
   return 'ok';
 }
 
-async function processSite(site, options) {
+async function processSite(site, options, onProgress = () => {}) {
   const result = {
     site: site.name,
     host: site.sshHost,
@@ -330,6 +442,8 @@ async function processSite(site, options) {
     plugins: emptySection(),
     themes: emptySection(),
     translations: { available: [], updated: [], remaining: [] },
+    coreUpdate: null,
+    phpCompatibility: null,
     errors: []
   };
 
@@ -342,6 +456,7 @@ async function processSite(site, options) {
     return result;
   }
 
+  onProgress('connecting');
   let conn;
   try {
     conn = await sshConnect(site, credentials);
@@ -355,6 +470,7 @@ async function processSite(site, options) {
   // One category failing must not skip the others.
   try {
     try {
+      onProgress('plugins');
       result.plugins = await processItemSection(
         conn,
         site,
@@ -366,6 +482,7 @@ async function processSite(site, options) {
       result.errors.push(`plugins: ${err.message}`);
     }
     try {
+      onProgress('themes');
       result.themes = await processItemSection(
         conn,
         site,
@@ -377,6 +494,7 @@ async function processSite(site, options) {
       result.errors.push(`themes: ${err.message}`);
     }
     try {
+      onProgress('translations');
       result.translations = await processTranslationSection(
         conn,
         site,
@@ -384,6 +502,18 @@ async function processSite(site, options) {
       );
     } catch (err) {
       result.errors.push(`translations: ${err.message}`);
+    }
+    try {
+      onProgress('core');
+      result.coreUpdate = await checkCoreUpdate(conn, site);
+    } catch (err) {
+      result.errors.push(`core: ${err.message}`);
+    }
+    try {
+      onProgress('php');
+      result.phpCompatibility = await checkPhpCompatibility(conn, site);
+    } catch (err) {
+      result.errors.push(`php: ${err.message}`);
     }
   } finally {
     conn.end();
@@ -485,7 +615,9 @@ function timestampSlug(date) {
 
 function buildMarkdownReport(results, options, timestamp) {
   const lines = [];
-  lines.push(`# wordpressMonitor update report — ${formatArgentinaTimestamp(timestamp)}`);
+  lines.push(
+    `# wordpressMonitor update report — ${formatArgentinaTimestamp(timestamp)}`
+  );
   lines.push('');
   lines.push(`Mode: ${options.dryRun ? 'dry run (check only)' : 'update'}`);
   lines.push('');
@@ -496,6 +628,27 @@ function buildMarkdownReport(results, options, timestamp) {
       lines.push(`- ERROR: ${err}`);
     }
     if (r.connected) {
+      if (r.coreUpdate) {
+        lines.push(
+          `- **ALERT: WordPress core update available: ${r.coreUpdate.version} (${r.coreUpdate.updateType || 'unknown'} update) — not applied automatically, review and update manually.**`
+        );
+      } else {
+        lines.push('- WordPress core: up to date.');
+      }
+      if (r.phpCompatibility) {
+        if (r.phpCompatibility.outdated) {
+          lines.push(
+            `- **ALERT: PHP version ${r.phpCompatibility.phpVersion} is below the recommended ${r.phpCompatibility.recommendedPhpVersion} — consider upgrading PHP in Hostinger hPanel.**`
+          );
+        }
+        for (const item of r.phpCompatibility.incompatibleItems) {
+          lines.push(
+            `- **ALERT: ${item.kind} "${item.name}" (${item.status}) requires PHP ${item.requiresPhp}, but the site runs PHP ${r.phpCompatibility.phpVersion}.**`
+          );
+        }
+      } else {
+        lines.push('- PHP compatibility: OK.');
+      }
       markdownItemSection(lines, 'Plugins', r.plugins, options);
       markdownItemSection(lines, 'Themes', r.themes, options);
       markdownTranslationSection(lines, r.translations, options);
@@ -516,6 +669,23 @@ function printSummary(results) {
           ? `, ${r.plugins.failed.length + r.themes.failed.length} failed`
           : '');
     console.log(`  ${r.site}: ${r.status} — ${counts}`);
+    if (r.coreUpdate) {
+      console.log(
+        `    ALERT: WordPress core update available (${r.coreUpdate.version}) — review and update manually`
+      );
+    }
+    if (r.phpCompatibility) {
+      if (r.phpCompatibility.outdated) {
+        console.log(
+          `    ALERT: PHP ${r.phpCompatibility.phpVersion} is below recommended ${r.phpCompatibility.recommendedPhpVersion}`
+        );
+      }
+      for (const item of r.phpCompatibility.incompatibleItems) {
+        console.log(
+          `    ALERT: ${item.kind} "${item.name}" requires PHP ${item.requiresPhp} (site runs ${r.phpCompatibility.phpVersion})`
+        );
+      }
+    }
   }
 }
 
@@ -537,7 +707,9 @@ async function main() {
   const results = [];
   for (const site of sites) {
     console.log(`- ${site.name} (${site.sshHost})...`);
-    const result = await processSite(site, options);
+    const result = await processSite(site, options, step =>
+      console.log(`    [${site.name}] ${step}...`)
+    );
     results.push(result);
     console.log(`  ${result.status}`);
   }

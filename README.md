@@ -77,6 +77,20 @@ and runs WP-CLI to detect and apply updates in three categories:
   re-check afterwards so any translation that didn't apply is reported as
   still remaining
 
+It also checks (but never applies) two things that need manual review:
+
+- **WordPress core updates** — `wp core check-update`. Core is never updated
+  automatically since a major/minor upgrade can break a site.
+- **PHP compatibility** — the site's current PHP version (via `wp eval`)
+  compared against WordPress's recommended minimum, plus any installed
+  plugin/theme whose `Requires PHP` header exceeds it. This flags outdated or
+  unsupported PHP, not "a newer version exists" — a site already on a
+  supported version reports OK even if a newer PHP release is available.
+
+Either check finding something marks the site `attention-needed` in the
+report, and the `/wp-update-plugins` email leads with an "Action needed"
+section (subject prefixed `[ACTION NEEDED]`) summarizing what to review.
+
 `src/check-ssh.js` is a smaller, independent diagnostic: it checks raw TCP
 reachability to `host:port` and then attempts an SSH handshake/auth using
 the same credential resolution as the updater, so connection problems can be

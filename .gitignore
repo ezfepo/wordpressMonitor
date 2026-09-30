@@ -10,3 +10,7 @@ Thumbs.db
 # Site inventory — contains real hosts/usernames/SSH credentials, never commit
 # See sites.json.example
 sites.json
+
+# Local settings (Gmail labels, DMARC known senders, retention) — personal, never commit
+# See config.json.example
+config.json

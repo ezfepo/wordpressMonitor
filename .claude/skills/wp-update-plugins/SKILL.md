@@ -1,13 +1,25 @@
 ---
 name: wp-update-plugins
-description: Check and update WordPress plugins, themes and translations on all Hostinger-hosted sites listed in sites.json, then email a per-site report. Use when the user asks to update WordPress plugins, themes or translations, check for updates, or run the daily wordpressMonitor maintenance.
+description: Check and update WordPress plugins, themes and translations on all Hostinger-hosted sites listed in sites.json, bump PHP via Hostinger, and process WordPress notification emails from Gmail, writing JSON results that build-report.js turns into an HTML report. Use when the user asks to update WordPress plugins, themes or translations, check for updates, or run the daily wordpressMonitor maintenance.
 ---
 
 # Update WordPress plugins, themes and translations (wordpressMonitor)
 
 Run the update workflow (plugins, themes and translation/language packs)
-against the sites configured in `sites.json`, then report the results by
-email.
+against the sites configured in `sites.json`. Results are written as JSON
+files in `reports/`; the runner (`.claude/scripts/run-daily-update.ps1`)
+then builds and opens the HTML report with `src/build-report.js`. **Do not
+create Gmail drafts or emails** — the report is the HTML file.
+
+Let `<ts>` be the timestamp slug of the `wp-update-<ts>.json` the script
+writes (e.g. `2026-09-30-093000`); the extra JSON files below reuse it.
+
+If the skill argument is `check-only`, the run is a dry run: use
+`npm run wp:check`, never call `hosting_updatePHPVersionV1`, and do not
+trash any email.
+
+**Language:** everything you write — JSON text fields (`summary`, `narrative`, `reason`,
+`note`, ...) and the final summary — must be in English.
 
 ## Steps
 
@@ -48,49 +60,71 @@ email.
      → new version), skipped due to a flagged plugin/theme compatibility
      issue, already on the highest supported version, or the
      `hosting_updatePHPVersionV1` call itself failed (include the error).
-5. Compose the email report and create a Gmail draft addressed to the
-   maintainer's own Gmail address (the account the Gmail integration is
-   authenticated as):
-   - An auto-applied PHP bump (no compatibility issue, update succeeded) is
-     **not** an action-needed item — it's routine, already-handled
-     maintenance, same as an auto-applied plugin/theme/translation update.
-     Only these count toward "action needed": a WordPress core update
-     available; a WP-CLI PHP compatibility alert (from `update-plugins.js`);
-     a PHP upgrade that was skipped because a plugin/theme was flagged; a
-     `hosting_updatePHPVersionV1` call that failed; or any site failure/
-     unreachable status.
-   - Subject: `wordpressMonitor update report — <date>`. Prefix it
-     `[ACTION NEEDED] wordpressMonitor update report — <date>` only if at
-     least one of the action-needed items above applies to some site. If
-     every site is clean (including any auto-applied PHP bumps), leave the
-     subject as-is with no prefix.
-   - Body: if there's anything action-needed, lead with an "Action needed"
-     section listing, per affected site: any WordPress core update
-     available (current → new version, update type); any PHP compatibility
-     alert (current PHP version vs. WordPress's recommended minimum, plus
-     any plugin/theme whose "Requires PHP" exceeds the site's PHP version);
-     a skipped PHP upgrade with the reason (e.g. "PHP 8.3 → 8.5 available
-     but skipped: theme X requires review first"); or a failed PHP update
-     call with its error. If nothing needs action, skip this section
-     entirely — don't create an empty or trivial "action needed" heading.
-     Then per-site status covering the three auto-updated categories — each
-     updated plugin and theme with old → new version, each updated
-     translation (core/plugin/theme + language), updates still available
-     (dry run), any failures or unreachable sites with their error
-     messages — plus, as routine info (not as an alert), any PHP version
-     that was auto-applied this run, e.g. "PHP updated 8.3 → 8.5."
-   - After creating the draft, apply the `wordpress` Gmail label to it:
-     `create_draft` returns a draft id and no separate message id, so use
-     `list_drafts` (filter by the exact subject just used) to get the draft's
-     `threadId`. Call `list_labels` to find the current label ID for the
-     label named `wordpress` (create it if it doesn't exist yet), then call
-     `label_thread` with that `threadId` and label ID (`label_message` fails
-     on draft ids — it needs a real message id, which isn't exposed for
-     drafts).
-   - Tell the user the draft is ready to review and send (the Gmail
-     integration cannot send directly).
-6. If Gmail tools are unavailable in the session, skip the draft: print the
-   summary in the response and point at the report file path instead.
+5. Write `reports/php-<ts>.json` with the per-site PHP outcome from step 4:
+
+   ```json
+   {
+     "sites": [
+       {
+         "site": "...",
+         "current": "8.3",
+         "highest": "8.5",
+         "outcome": "bumped|skipped-compat|up-to-date|failed|available-dry-run",
+         "newVersion": "8.5",
+         "reason": "...",
+         "error": "..."
+       }
+     ]
+   }
+   ```
+
+   - `bumped`: auto-applied (routine, not an alert). `skipped-compat`: a
+     newer version exists but a plugin/theme was flagged (`reason` says
+     which). `failed`: `hosting_updatePHPVersionV1` errored (`error`).
+     `available-dry-run`: newer version exists but this is a check-only run.
+   - If the Hostinger connector isn't available, write
+     `{ "unavailable": true }`.
+
+6. Process WordPress notification emails from Gmail. Skip and write
+   `reports/wp-mails-<ts>.json` as `{ "unavailable": true }` if the Gmail
+   tools aren't available.
+   - Read `config.json` -> `gmail.labels.wordpress` (default
+     `wordpress`). `search_threads` with `label:"<label>"`, then `get_thread`
+     for each hit.
+   - Write `reports/wp-mails-<ts>.json`:
+
+     ```json
+     {
+       "label": "wordpress",
+       "mails": [
+         {
+           "threadId": "...",
+           "date": "...",
+           "from": "...",
+           "subject": "...",
+           "site": "...",
+           "kind": "auto-update|fatal-error|security|admin-notice|other",
+           "summary": "one line",
+           "actionNeeded": false
+         }
+       ],
+       "trashed": ["threadId"],
+       "trashFailed": ["threadId"]
+     }
+     ```
+
+     Deduce `site` from the sender/domain against `sites.json` names/paths
+     (`null` if unknown). `actionNeeded` is `true` for fatal errors /
+     recovery mode, security notices and admin-email-change notices.
+
+   - Normal run: after the JSON is written, `trash_thread` every thread that
+     was read successfully and list it in `trashed` (failures in
+     `trashFailed`; update the JSON). Check-only run: don't trash anything;
+     leave `trashed` empty.
+   - No threads under the label: write `"mails": []`.
+7. Print a short plain-text summary of what happened (sites, updates, PHP
+   bumps, emails processed). Never mention drafts, the HTML report or file paths
+   in it; the runner handles all of that.
 
 ## Prerequisites (mention if the run fails on credentials)
 

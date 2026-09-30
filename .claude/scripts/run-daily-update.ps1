@@ -1,18 +1,29 @@
-# wordpressMonitor daily update — invoked by Windows Task Scheduler.
+# wordpressMonitor — on-demand runner (menu).
 #
-# Runs the /wp-update-plugins skill through the Claude Code CLI in headless
-# mode: it executes npm run wp:update, reads the report, and creates a Gmail
-# draft (addressed to the maintainer's own Gmail account) with the results.
-# The draft still needs a manual send — the Gmail integration has no send
-# tool, only create_draft.
+# Usage:  run-daily-update.ps1 [-Mode wp|dmarc|all|dryrun]
+# Without -Mode it shows a menu (Update: 1 WordPress, 2 DMARC, 3 both;
+# Check only: 4 WordPress, 5 DMARC).
 #
-# Uses --output-format stream-json so progress (tool calls, assistant text)
-# prints live line by line as Claude works, instead of one block after the
-# whole run finishes (headless -p with plain "text" output emits nothing
-# until the turn is fully done). Each line is parsed into a short summary;
-# the raw JSON stream is kept in the log for troubleshooting.
+# Each mode runs one or more Claude Code skills headlessly (claude -p):
+#   wp     -> /wp-update-plugins   (updates, PHP bump, WordPress emails)
+#   dmarc  -> /dmarc-check         (DMARC reports from Gmail)
+#   all    -> both, in separate sessions
+#   dryrun -> /wp-update-plugins check-only (nothing is changed or trashed)
+#   dmarcdry -> /dmarc-check check-only (parses reports, trashes nothing)
+# Afterwards src/build-report.js merges the run's JSON results into
+# reports/report-<ts>.html, which is opened automatically. Files older than
+# retentionDays (config.json) are then deleted from .claude/tmp,
+# .claude/logs and reports.
+#
+# Uses --output-format stream-json so progress prints live line by line; the
+# raw JSON stream is kept in the log for troubleshooting.
 #
 # Logs each run to .claude\logs\ (gitignored) for troubleshooting.
+
+param(
+  [ValidateSet('wp', 'dmarc', 'all', 'dryrun', 'dmarcdry')]
+  [string]$Mode
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -36,9 +47,47 @@ if ([Environment]::UserInteractive -and -not [Console]::IsOutputRedirected) {
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $repoRoot
 
+if (-not $Mode) {
+  Write-Output 'wordpressMonitor - what do you want to do?'
+  Write-Output ''
+  Write-Output '  Update'
+  Write-Output '   1. Update WordPress sites      (plugins, themes, translations, PHP)'
+  Write-Output '   2. Process DMARC reports       (processed emails go to the trash)'
+  Write-Output '   3. Do everything               (1 + 2)'
+  Write-Output ''
+  Write-Output '  Check only (changes nothing)'
+  Write-Output '   4. Check WordPress sites       (see what is pending)'
+  Write-Output '   5. Check DMARC reports         (emails stay in Gmail, can be repeated)'
+  Write-Output ''
+  Write-Output '   Q. Quit'
+  $choice = Read-Host 'Choose'
+  switch ($choice.Trim().ToLower()) {
+    '1' { $Mode = 'wp' }
+    '2' { $Mode = 'dmarc' }
+    '3' { $Mode = 'all' }
+    '4' { $Mode = 'dryrun' }
+    '5' { $Mode = 'dmarcdry' }
+    default { Write-Output 'Nothing to do.'; exit 0 }
+  }
+}
+
+$retentionDays = 3
+$configFile = Join-Path $repoRoot 'config.json'
+if (Test-Path $configFile) {
+  try {
+    $config = Get-Content $configFile -Raw | ConvertFrom-Json
+    if ($config.retentionDays -is [int] -or $config.retentionDays -is [long]) {
+      $retentionDays = [int]$config.retentionDays
+    }
+  } catch {
+    Write-Output "Could not read config.json, using defaults: $($_.Exception.Message)"
+  }
+}
+
 $logDir = Join-Path $repoRoot '.claude\logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-$logFile = Join-Path $logDir "daily-update-$(Get-Date -Format 'yyyy-MM-dd-HHmmss').log"
+$runStart = Get-Date
+$runStamp = $runStart.ToString('yyyy-MM-dd-HHmmss')
 
 # Friendly labels for the tools this workflow actually uses, so progress
 # reads like a task list instead of raw tool/API names. Several Gmail calls
@@ -46,25 +95,34 @@ $logFile = Join-Path $logDir "daily-update-$(Get-Date -Format 'yyyy-MM-dd-HHmmss
 # (via $SuppressAfterFirst) so the log reads as one step, not a burst of near
 # -identical lines.
 $ToolLabels = @{
-  Bash                                 = 'Running the update script'
-  Read                                 = 'Reading the report'
-  ToolSearch                           = 'Preparing the email report'
-  mcp__claude_ai_Gmail__create_draft   = 'Preparing the email report'
-  mcp__claude_ai_Gmail__list_drafts    = 'Preparing the email report'
-  mcp__claude_ai_Gmail__list_labels    = 'Preparing the email report'
-  mcp__claude_ai_Gmail__label_thread   = 'Preparing the email report'
-  mcp__claude_ai_Gmail__label_message  = 'Preparing the email report'
+  Bash                                 = 'Running scripts'
+  Read                                 = 'Reading results'
+  Write                                = 'Saving results'
+  ToolSearch                           = 'Preparing tools'
+  Glob                                 = 'Reading results'
+  Grep                                 = 'Reading results'
+  Edit                                 = 'Saving results'
+  'mcp__claude_ai_Hostinger_Connector__search'        = 'Checking PHP versions with Hostinger'
+  'mcp__claude_ai_Hostinger_Connector__execute'       = 'Checking PHP versions with Hostinger'
+  'mcp__claude_ai_Hostinger_Connector__multi-execute' = 'Checking PHP versions with Hostinger'
+  mcp__claude_ai_Gmail__search_threads = 'Reading Gmail'
+  mcp__claude_ai_Gmail__get_thread     = 'Reading Gmail'
+  mcp__claude_ai_Gmail__get_message    = 'Reading Gmail'
+  mcp__claude_ai_Gmail__trash_thread   = 'Sending processed emails to trash'
   'mcp__claude_ai_Hostinger_Connector__hosting_getPHPDetailsV1'    = 'Checking PHP versions with Hostinger'
   'mcp__claude_ai_Hostinger_Connector__hosting_updatePHPVersionV1' = 'Updating PHP versions with Hostinger'
 }
 
-# Labels in here print only the first time they're seen per run; repeats
-# (e.g. one Hostinger PHP check/update per site, several Gmail calls in a
-# row) are silently absorbed.
+# Labels in here print only the first time they're seen per skill run;
+# repeats (one call per site/thread) are silently absorbed.
 $SuppressAfterFirst = @(
-  'Preparing the email report',
+  'Preparing tools',
+  'Reading results',
+  'Reading Gmail',
+  'Sending processed emails to trash',
   'Checking PHP versions with Hostinger',
-  'Updating PHP versions with Hostinger'
+  'Updating PHP versions with Hostinger',
+  'Saving results'
 )
 $SeenLabels = New-Object 'System.Collections.Generic.HashSet[string]'
 
@@ -89,7 +147,7 @@ function Write-StreamEvent {
   switch ($streamEvent.type) {
     'system' {
       if ($streamEvent.subtype -eq 'init') {
-        Write-Output '==> Starting wordpressMonitor update...'
+        Write-Output "==> Started: $script:CurrentTitle"
       }
     }
     'assistant' {
@@ -110,9 +168,9 @@ function Write-StreamEvent {
     }
     'result' {
       if ($streamEvent.subtype -eq 'success') {
-        Write-Output '==> Done.'
+        Write-Output "==> Done: $script:CurrentTitle"
       } else {
-        Write-Output "==> Finished with an error: $($streamEvent.subtype)"
+        Write-Output "==> Failed: $script:CurrentTitle ($($streamEvent.subtype))"
       }
     }
     'tool_progress' {
@@ -128,21 +186,82 @@ function Write-StreamEvent {
   }
 }
 
-$rawLog = "$logFile.jsonl"
+function Invoke-ClaudeSkill {
+  param([string]$Prompt, [string]$LogName, [string]$Title)
 
-& claude -p "/wp-update-plugins" `
-  --permission-mode bypassPermissions `
-  --output-format stream-json `
-  --verbose `
-  2>&1 |
-  ForEach-Object {
-    Add-Content -Path $rawLog -Value $_ -Encoding utf8
-    $friendly = Write-StreamEvent -Line $_
-    foreach ($line in $friendly) {
-      Write-Output $line
-      Add-Content -Path $logFile -Value $line -Encoding utf8
+  $logFile = Join-Path $logDir "$LogName-$runStamp.log"
+  $rawLog = "$logFile.jsonl"
+  $script:CurrentTitle = $Title
+  $script:SeenLabels.Clear()
+  $script:LogFiles += $logFile
+
+  & claude -p $Prompt `
+    --permission-mode bypassPermissions `
+    --output-format stream-json `
+    --verbose `
+    2>&1 |
+    ForEach-Object {
+      Add-Content -Path $rawLog -Value $_ -Encoding utf8
+      $friendly = Write-StreamEvent -Line $_
+      foreach ($line in $friendly) {
+        Write-Output $line
+        Add-Content -Path $logFile -Value $line -Encoding utf8
+      }
     }
+  # Not `return`ed: the function's output stream carries the progress lines.
+  $script:SkillExit = $LASTEXITCODE
+}
+
+function Remove-OldFiles {
+  $cutoff = (Get-Date).AddDays(-$retentionDays)
+  foreach ($dir in @('.claude\tmp', '.claude\logs', 'reports')) {
+    $full = Join-Path $repoRoot $dir
+    if (-not (Test-Path $full)) { continue }
+    Get-ChildItem -Path $full -File -Recurse -Force |
+      Where-Object { $_.LastWriteTime -lt $cutoff } |
+      Remove-Item -Force -ErrorAction SilentlyContinue
   }
-$exitCode = $LASTEXITCODE
+  # Drop empty subfolders left in tmp.
+  $tmp = Join-Path $repoRoot '.claude\tmp'
+  if (Test-Path $tmp) {
+    Get-ChildItem -Path $tmp -Directory -Recurse |
+      Sort-Object { $_.FullName.Length } -Descending |
+      Where-Object { -not (Get-ChildItem -Path $_.FullName -Force) } |
+      Remove-Item -Force -ErrorAction SilentlyContinue
+  }
+}
+
+$LogFiles = @()
+$exitCode = 0
+try {
+  if ($Mode -in 'wp', 'all') {
+    Invoke-ClaudeSkill -Prompt '/wp-update-plugins' -LogName 'wp-update' -Title 'Update WordPress sites'
+    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+  }
+  if ($Mode -eq 'dryrun') {
+    Invoke-ClaudeSkill -Prompt '/wp-update-plugins check-only' -LogName 'wp-check' -Title 'Check WordPress sites'
+    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+  }
+  if ($Mode -in 'dmarc', 'all') {
+    Invoke-ClaudeSkill -Prompt '/dmarc-check' -LogName 'dmarc-check' -Title 'Process DMARC reports'
+    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+  }
+  if ($Mode -eq 'dmarcdry') {
+    Invoke-ClaudeSkill -Prompt '/dmarc-check check-only' -LogName 'dmarc-check' -Title 'Check DMARC reports'
+    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+  }
+
+  $since = $runStart.ToUniversalTime().ToString('o')
+  $reportPath = & node src/build-report.js --since $since --mode $Mode --logs ($LogFiles -join ',')
+  if ($LASTEXITCODE -eq 0 -and $reportPath -and (Test-Path $reportPath)) {
+    Write-Output "==> Report: $reportPath"
+    Start-Process $reportPath
+  } else {
+    Write-Output '==> Could not build the HTML report.'
+    $exitCode = [Math]::Max($exitCode, 1)
+  }
+} finally {
+  Remove-OldFiles
+}
 
 exit $exitCode

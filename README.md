@@ -3,7 +3,8 @@
 Keeps a fleet of WordPress sites up to date. wordpressMonitor connects to each site over
 SSH and uses [WP-CLI](https://wp-cli.org/) to check and update plugins,
 themes, and translation/language packs — then writes a per-site Markdown +
-JSON report.
+JSON report. It can also process DMARC aggregate reports from Gmail, and
+merges everything into one HTML report.
 
 Built for Hostinger-style shared/VPS hosting where each site is reachable
 over SSH and has WP-CLI available.
@@ -37,6 +38,26 @@ over SSH and has WP-CLI available.
    `sites.json` is never committed — it's gitignored, since it holds both
    site info and credentials.
 
+3. Optional: configure local settings — copy the example:
+
+   ```sh
+   cp config.json.example config.json
+   ```
+
+   `config.json` is gitignored and every key is optional (defaults apply if the
+   file or a key is missing):
+
+   | Key                      | Default     | Meaning                                                                                                                             |
+   | ------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+   | `retentionDays`          | `3`         | After each run, files older than this are deleted from `.claude/tmp/`, `.claude/logs/` and `reports/`.                              |
+   | `gmail.labels.dmarc`     | `dmarc`     | Gmail label holding the DMARC aggregate report emails.                                                                              |
+   | `gmail.labels.wordpress` | `wordpress` | Gmail label holding WordPress notification emails.                                                                                  |
+   | `dmarc.knownSources`     | none        | Your legitimate senders: `{ "name", "match": [...] }`. Each `match` is a hostname suffix (reverse DNS) or an IP prefix, plain text. |
+
+   A DMARC source that matches and passes alignment is `ok`; one that matches but
+   fails is `known-unaligned` (domain status `attention`); one that doesn't match
+   any entry is `unknown` (domain status `alert`, possible spoofing).
+
 ## Usage
 
 ```sh
@@ -57,14 +78,33 @@ Each `wp:update` / `wp:check` run writes a timestamped report to `reports/`
 summary. One site or category failing doesn't stop the others; the process
 exits with code `1` if any site ended up in a non-OK state.
 
-### Running via `/wp-update-plugins` (Claude Code)
+### Running on demand (menu + HTML report)
 
-`.claude/skills/wp-update-plugins/` runs the update, reads the report, and
-drafts an email summary via the Gmail MCP integration (tagged with a
-`wordpress` Gmail label). Invoke it as `/wp-update-plugins` in a Claude Code
-session, or headlessly via `.claude/scripts/run-daily-update.ps1`, which logs
-each run to `.claude/logs/` (gitignored). `wordpressMonitor Update.bat.example`
-is a sample double-click shortcut for triggering that script on demand.
+`.claude/scripts/run-daily-update.ps1` runs the Claude Code skills headlessly.
+Without arguments it shows a menu (or pass `-Mode wp|dmarc|all|dryrun|dmarcdry`):
+
+**Update**
+
+1. **Update WordPress sites** — `/wp-update-plugins`: updates, PHP bump via
+   Hostinger and processing of WordPress notification emails (the Gmail
+   `wordpress` label, moved to the trash afterwards).
+2. **Process DMARC reports** — `/dmarc-check`: parses the reports under the Gmail
+   `dmarc` label, adds highlights and moves the processed emails to the trash.
+3. **Do everything** — both, in separate sessions.
+
+**Check only** (changes nothing)
+
+4. **Check WordPress sites** — nothing is updated, no PHP bump, no emails trashed
+   (`-Mode dryrun`).
+5. **Check DMARC reports** — parses and reports but trashes nothing, so it can be
+   repeated (`-Mode dmarcdry`).
+
+When it finishes it builds `reports/report-<timestamp>.html` (via
+`src/build-report.js`) and opens it, then deletes files older than
+`retentionDays`. Logs go to `.claude/logs/` (gitignored). No Gmail drafts are
+created. You can also invoke `/wp-update-plugins` or `/dmarc-check` directly in a
+Claude Code session. `wordpressMonitor Update.bat.example` is a sample
+double-click shortcut for the runner.
 
 **Optional:** if the [Hostinger MCP connector](https://docs.hostinger.com/hostinger-connector/overview)
 is connected in the session, the skill also checks each site's PHP version
@@ -78,7 +118,7 @@ flagged by the WP-CLI PHP compatibility check, the skill auto-applies the PHP
 update via `hosting_updatePHPVersionV1` (jumping to the highest supported
 version) with no confirmation prompt — this runs unattended on every
 invocation, including headless/scheduled runs. A successful bump is reported
-as routine info in the email, not as something needing action. If a
+as routine info in the report, not as something needing action. If a
 plugin/theme was flagged (or the update call itself fails), it's skipped and
 reported as an alert instead so it can be reviewed manually first.
 
@@ -104,8 +144,13 @@ It also checks (but never applies) two things that need manual review:
   supported version reports OK even if a newer PHP release is available.
 
 Either check finding something marks the site `attention-needed` in the
-report, and the `/wp-update-plugins` email leads with an "Action needed"
-section (subject prefixed `[ACTION NEEDED]`) summarizing what to review.
+report, and the HTML report leads with an "Action needed" section summarizing
+what to review.
+
+`src/parse-dmarc.js` decodes DMARC aggregate report emails (base64url RAW
+message → zip/gzip → XML), classifies each source IP against
+`dmarc.knownSources` and computes highlights, with no dependencies.
+`src/build-report.js` renders the run's JSON results into the HTML report.
 
 `src/check-ssh.js` is a smaller, independent diagnostic: it checks raw TCP
 reachability to `host:port` and then attempts an SSH handshake/auth using

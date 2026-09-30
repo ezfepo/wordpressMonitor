@@ -1,0 +1,21 @@
+{
+  "retentionDays": 3,
+  "gmail": {
+    "labels": {
+      "dmarc": "dmarc",
+      "wordpress": "wordpress"
+    }
+  },
+  "dmarc": {
+    "knownSources": [
+      {
+        "name": "Titan (mailboxes)",
+        "match": ["flockmail.com", "titan.email"]
+      },
+      {
+        "name": "Hostinger shared hosting (WordPress wp_mail via MailChannels)",
+        "match": ["main-hosting.eu"]
+      }
+    ]
+  }
+}

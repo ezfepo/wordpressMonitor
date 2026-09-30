@@ -38,8 +38,9 @@ the corresponding commands (e.g. how to run a single test).
   excludeThemes, plus either `sshPassword` or `sshKeyPath` (+ optional
   `sshKeyPassphrase`) per site. Never committed.
 - `.claude/skills/wp-update-plugins/` — on-demand entry point (`/wp-update-plugins`): runs
-  the script, reads the newest report, drafts the report email via Gmail, and tags the
-  draft with the existing `wordpress` Gmail label. It also has an **optional** step
+  the script, writes `php-<ts>.json` (PHP outcome) and `wp-mails-<ts>.json` (WordPress
+  notification emails read from the Gmail label in `config.json`, then trashed
+  unless check-only). It creates no Gmail drafts. It also has an **optional** step
   (skipped silently if not set up — nothing else in the workflow depends on it): if the
   Hostinger MCP connector is connected in the session, it checks each site's PHP version
   against Hostinger's own available versions (`hosting_getPHPDetailsV1`, keyed by
@@ -59,22 +60,45 @@ the corresponding commands (e.g. how to run a single test).
   else (plugins, themes, translations, core updates) stays either auto-applied-but-
   reversible (WP-CLI update) or alert-only (core, and the WP-CLI PHP floor check).
 
-## Running the update manually
+## Running on demand
 
-There is no active scheduled automation — updates are run on demand via
-`.claude/scripts/run-daily-update.ps1`, which calls `claude -p "/wp-update-plugins"`
-headlessly so a real Claude Code session performs the update and creates/tags the Gmail
-report draft (same as running `/wp-update-plugins` manually in a session). This is
-triggered from a desktop shortcut (a `.bat` file, outside this repo) that runs the script.
+There is no scheduled automation. `.claude/scripts/run-daily-update.ps1` (triggered from a
+desktop `.bat`, see `wordpressMonitor Update.bat.example`) shows a menu, or takes
+`-Mode wp|dmarc|all|dryrun|dmarcdry`. Menu: **Update** — 1 Update WordPress sites
+(`/wp-update-plugins`), 2 Process DMARC reports (`/dmarc-check`), 3 Do everything (both,
+separate `claude -p` sessions); **Check only** (changes nothing) — 4 Check WordPress sites
+(`dryrun`, `/wp-update-plugins check-only`: nothing updated, no PHP bump, no emails
+trashed), 5 Check DMARC reports (`dmarcdry`, `/dmarc-check check-only`: parses and reports
+but trashes nothing, so it can be repeated). When done,
+`src/build-report.js` merges the run's JSON into `reports/report-<ts>.html`, which is opened
+automatically. This replaced the old Gmail-draft report. `npm run report` rebuilds it by hand.
+
+- `config.json` (gitignored, template in `config.json.example`; every key is optional and
+  falls back to the default shown): `retentionDays` (default 3),
+  `gmail.labels.dmarc` / `gmail.labels.wordpress` (default `dmarc` / `wordpress`) — the
+  Gmail labels the skills read from — and `dmarc.knownSources` (your legitimate senders;
+  default none, so every source shows as `unknown`). The skills, the runner and
+  `parse-dmarc.js` all read this file.
+- **Cleanup**: after every run the script deletes files older than `retentionDays` from
+  `.claude/tmp/`, `.claude/logs/` and `reports/`, so the HTML report is the only record
+  while it exists.
+- **DMARC** (`.claude/skills/dmarc-check/`): reads threads under the dmarc label, saves each
+  raw message to `.claude/tmp/dmarc/`, `src/parse-dmarc.js` extracts and parses the
+  zip/gzip XML (ZIP CRC is not verified on purpose — some senders ship bad CRCs), classifies
+  source IPs via reverse DNS against `config.json` (`dmarc.knownSources`) (`ok` / `known-unaligned` /
+  `unknown`), computes highlights and a per-domain status, and the skill adds an English
+  `narrative`. Successfully parsed threads are moved to Gmail trash (recoverable 30 days);
+  unparseable ones stay. Update `config.json` (`dmarc.knownSources`) when mail moves fully to Titan.
+- `src/lib/format.js` holds the shared timestamp helpers (report time zone = the machine time zone, override with the `TZ` environment variable).
 
 ### Where the run output lives
 
-- `.claude/logs/daily-update-<timestamp>.log` (gitignored) — one file per run, the full
-  Claude Code CLI output: sites processed, plugins/themes/translations updated, and
-  confirmation that the Gmail draft was created and labeled.
-- `reports/wp-update-<timestamp>.md` / `.json` (gitignored) — the structured per-site
-  report the update script itself writes, regardless of how it was triggered (manually or
-  via the skill).
+- `reports/report-<timestamp>.html` — the human report (action needed, sites, WordPress
+  emails, DMARC highlights).
+- `reports/wp-update-*.md|json`, `php-*.json`, `wp-mails-*.json`, `dmarc-*.json` — the inputs
+  the HTML is built from.
+- `.claude/logs/<wp-update|wp-check|dmarc-check>-<timestamp>.log` (+ `.jsonl` raw stream).
+- All gitignored.
 
 ## Formatting
 
@@ -86,4 +110,5 @@ ESLint is enabled with flat config expected (no `eslint.config.js` exists yet).
 ## Plans and temp files
 
 - **Plans** go in `.claude/plans/` (repo root). Never write plans to the user-global `~/.claude/plans/` or to `docs/` subfolders. Create the folder if it doesn't exist.
+  Track progress with `- [ ]` / `- [x]` checklists inside the plan. When every step is checked, move the plan to `.claude/plans/archive/` (after recording any lasting decision in this file).
 - **Scratch / temp files** go in `.claude/tmp/` (repo root). Never use the OS temp dir or a `tmp/` folder at project or subfolder level.

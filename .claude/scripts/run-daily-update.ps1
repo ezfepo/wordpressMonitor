@@ -6,10 +6,10 @@
 #
 # Each mode runs one or more Claude Code skills headlessly (claude -p):
 #   wp     -> /wp-update-plugins   (updates, PHP bump, WordPress emails)
-#   dmarc  -> /dmarc-check         (DMARC reports from Gmail)
+#   dmarc  -> node src/dmarc-fetch.js (DMARC reports from Gmail API, no Claude)
 #   all    -> both, in separate sessions
 #   dryrun -> /wp-update-plugins check-only (nothing is changed or trashed)
-#   dmarcdry -> /dmarc-check check-only (parses reports, trashes nothing)
+#   dmarcdry -> node src/dmarc-fetch.js --dry-run (parses reports, trashes nothing)
 # Afterwards src/build-report.js merges the run's JSON results into
 # reports/report-<ts>.html, which is opened automatically. Files older than
 # retentionDays (config.json) are then deleted from .claude/tmp,
@@ -212,6 +212,20 @@ function Invoke-ClaudeSkill {
   $script:SkillExit = $LASTEXITCODE
 }
 
+function Invoke-NodeScript {
+  param([string[]]$NodeArgs, [string]$LogName, [string]$Title)
+
+  $logFile = Join-Path $logDir "$LogName-$runStamp.log"
+  $script:LogFiles += $logFile
+  Write-Output "==> Started: $Title"
+  & node @NodeArgs 2>&1 |
+    ForEach-Object {
+      Write-Output "$_"
+      Add-Content -Path $logFile -Value "$_" -Encoding utf8
+    }
+  $script:SkillExit = $LASTEXITCODE
+}
+
 function Remove-OldFiles {
   $cutoff = (Get-Date).AddDays(-$retentionDays)
   foreach ($dir in @('.claude\tmp', '.claude\logs', 'reports')) {
@@ -243,11 +257,11 @@ try {
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
   }
   if ($Mode -in 'dmarc', 'all') {
-    Invoke-ClaudeSkill -Prompt '/dmarc-check' -LogName 'dmarc-check' -Title 'Process DMARC reports'
+    Invoke-NodeScript -NodeArgs @('src/dmarc-fetch.js') -LogName 'dmarc-check' -Title 'Process DMARC reports'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
   }
   if ($Mode -eq 'dmarcdry') {
-    Invoke-ClaudeSkill -Prompt '/dmarc-check check-only' -LogName 'dmarc-check' -Title 'Check DMARC reports'
+    Invoke-NodeScript -NodeArgs @('src/dmarc-fetch.js', '--dry-run') -LogName 'dmarc-check' -Title 'Check DMARC reports'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
   }
 

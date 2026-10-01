@@ -65,10 +65,10 @@ the corresponding commands (e.g. how to run a single test).
 There is no scheduled automation. `.claude/scripts/run-daily-update.ps1` (triggered from a
 desktop `.bat`, see `wordpressMonitor Update.bat.example`) shows a menu, or takes
 `-Mode wp|dmarc|all|dryrun|dmarcdry`. Menu: **Update** — 1 Update WordPress sites
-(`/wp-update-plugins`), 2 Process DMARC reports (`/dmarc-check`), 3 Do everything (both,
-separate `claude -p` sessions); **Check only** (changes nothing) — 4 Check WordPress sites
+(`/wp-update-plugins`), 2 Process DMARC reports (`node src/dmarc-fetch.js`, no Claude), 3 Do everything (both;
+the WordPress part is its own `claude -p` session); **Check only** (changes nothing) — 4 Check WordPress sites
 (`dryrun`, `/wp-update-plugins check-only`: nothing updated, no PHP bump, no emails
-trashed), 5 Check DMARC reports (`dmarcdry`, `/dmarc-check check-only`: parses and reports
+trashed), 5 Check DMARC reports (`dmarcdry`, `dmarc-fetch.js --dry-run`: parses and reports
 but trashes nothing, so it can be repeated). When done,
 `src/build-report.js` merges the run's JSON into `reports/report-<ts>.html`, which is opened
 automatically. This replaced the old Gmail-draft report. `npm run report` rebuilds it by hand.
@@ -82,7 +82,7 @@ automatically. This replaced the old Gmail-draft report. `npm run report` rebuil
 - **Cleanup**: after every run the script deletes files older than `retentionDays` from
   `.claude/tmp/`, `.claude/logs/` and `reports/`, so the HTML report is the only record
   while it exists.
-- **DMARC** (`.claude/skills/dmarc-check/`): reads threads under the dmarc label, saves each
+- **DMARC** (`src/dmarc-fetch.js`, no Claude): the runner's `dmarc`/`dmarcdry` modes run `node src/dmarc-fetch.js [--dry-run]`, which talks to the Gmail API directly (`src/lib/gmail.js`, plain fetch, scope `gmail.modify`), parses with `parse-dmarc.js`, builds a rule-based `narrative` and trashes parsed threads (not with `--dry-run`). Credentials: `gmail-auth.json` (gitignored: clientId, clientSecret, refreshToken), created once with `npm run gmail:auth` (Google Cloud project, Gmail API enabled, OAuth client type Desktop app; publish the consent screen "In production" or the refresh token expires after 7 days). The manual skill below remains for interactive use. **DMARC skill** (`.claude/skills/dmarc-check/`): reads threads under the dmarc label, saves each
   raw message to `.claude/tmp/dmarc/`, `src/parse-dmarc.js` extracts and parses the
   zip/gzip XML (ZIP CRC is not verified on purpose — some senders ship bad CRCs), classifies
   source IPs via reverse DNS against `config.json` (`dmarc.knownSources`) (`ok` / `known-unaligned` /

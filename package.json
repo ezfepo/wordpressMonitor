@@ -13,6 +13,8 @@
     "wp:update": "node src/update-plugins.js",
     "wp:check": "node src/update-plugins.js --dry-run",
     "wp:check-ssh": "node src/check-ssh.js",
+    "gmail:auth": "node src/gmail-auth.js",
+    "dmarc:fetch": "node src/dmarc-fetch.js",
     "dmarc:parse": "node src/parse-dmarc.js",
     "report": "node src/build-report.js"
   },

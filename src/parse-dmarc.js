@@ -401,7 +401,11 @@ async function main() {
   for (const w of warns) console.warn(`warning: ${w}`);
 }
 
-main().catch(err => {
-  console.error(`parse-dmarc error: ${err.message}`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error(`parse-dmarc error: ${err.message}`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { buildOutput };

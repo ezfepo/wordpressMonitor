@@ -3,7 +3,7 @@
 Keeps a fleet of WordPress sites up to date. wordpressMonitor connects to each site over
 SSH and uses [WP-CLI](https://wp-cli.org/) to check and update plugins,
 themes, and translation/language packs — then writes a per-site Markdown +
-JSON report. It can also process DMARC aggregate reports from Gmail, and
+JSON report. It can also process DMARC aggregate reports from Gmail (via the Gmail API, no Claude needed), and
 merges everything into one HTML report.
 
 Built for Hostinger-style shared/VPS hosting where each site is reachable
@@ -80,7 +80,7 @@ exits with code `1` if any site ended up in a non-OK state.
 
 ### Running on demand (menu + HTML report)
 
-`.claude/scripts/run-daily-update.ps1` runs the Claude Code skills headlessly.
+`.claude/scripts/run-daily-update.ps1` runs the WordPress skill headlessly (Claude Code) and the DMARC step as a plain Node script.
 Without arguments it shows a menu (or pass `-Mode wp|dmarc|all|dryrun|dmarcdry`):
 
 **Update**
@@ -88,9 +88,9 @@ Without arguments it shows a menu (or pass `-Mode wp|dmarc|all|dryrun|dmarcdry`)
 1. **Update WordPress sites** — `/wp-update-plugins`: updates, PHP bump via
    Hostinger and processing of WordPress notification emails (the Gmail
    `wordpress` label, moved to the trash afterwards).
-2. **Process DMARC reports** — `/dmarc-check`: parses the reports under the Gmail
+2. **Process DMARC reports** — `node src/dmarc-fetch.js`: parses the reports under the Gmail
    `dmarc` label, adds highlights and moves the processed emails to the trash.
-3. **Do everything** — both, in separate sessions.
+3. **Do everything** — both.
 
 **Check only** (changes nothing)
 
@@ -102,7 +102,7 @@ Without arguments it shows a menu (or pass `-Mode wp|dmarc|all|dryrun|dmarcdry`)
 When it finishes it builds `reports/report-<timestamp>.html` (via
 `src/build-report.js`) and opens it, then deletes files older than
 `retentionDays`. Logs go to `.claude/logs/` (gitignored). No Gmail drafts are
-created. You can also invoke `/wp-update-plugins` or `/dmarc-check` directly in a
+created. You can also invoke `/wp-update-plugins` or `/dmarc-check` (the interactive DMARC variant) directly in a
 Claude Code session. `wordpressMonitor Update.bat.example` is a sample
 double-click shortcut for the runner.
 
@@ -146,6 +146,8 @@ It also checks (but never applies) two things that need manual review:
 Either check finding something marks the site `attention-needed` in the
 report, and the HTML report leads with an "Action needed" section summarizing
 what to review.
+
+`src/dmarc-fetch.js` reads the DMARC label through the Gmail API (`src/lib/gmail.js`), runs the parser, writes a rule-based narrative and trashes the parsed threads (not with `--dry-run`). It needs a one-time setup: create a Google Cloud project with the Gmail API enabled and an OAuth client of type **Desktop app** (publish the consent screen "In production", otherwise the refresh token expires after 7 days), then run `npm run gmail:auth`, which saves `gmail-auth.json` (gitignored).
 
 `src/parse-dmarc.js` decodes DMARC aggregate report emails (base64url RAW
 message → zip/gzip → XML), classifies each source IP against

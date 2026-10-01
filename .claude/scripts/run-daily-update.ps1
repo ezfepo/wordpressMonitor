@@ -5,7 +5,7 @@
 # Check only: 4 WordPress, 5 DMARC).
 #
 # Each mode runs one or more Claude Code skills headlessly (claude -p):
-#   wp     -> /wp-update-plugins   (updates, PHP bump, WordPress emails)
+#   wp     -> /wp-update-plugins   (updates, PHP bump) + node src/wp-mails-fetch.js (WordPress emails, no Claude)
 #   dmarc  -> node src/dmarc-fetch.js (DMARC reports from Gmail API, no Claude)
 #   all    -> both, in separate sessions
 #   dryrun -> /wp-update-plugins check-only (nothing is changed or trashed)
@@ -251,9 +251,13 @@ try {
   if ($Mode -in 'wp', 'all') {
     Invoke-ClaudeSkill -Prompt '/wp-update-plugins' -LogName 'wp-update' -Title 'Update WordPress sites'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+    Invoke-NodeScript -NodeArgs @('src/wp-mails-fetch.js') -LogName 'wp-mails' -Title 'Process WordPress emails'
+    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
   }
   if ($Mode -eq 'dryrun') {
     Invoke-ClaudeSkill -Prompt '/wp-update-plugins check-only' -LogName 'wp-check' -Title 'Check WordPress sites'
+    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+    Invoke-NodeScript -NodeArgs @('src/wp-mails-fetch.js', '--dry-run') -LogName 'wp-mails' -Title 'Check WordPress emails'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
   }
   if ($Mode -in 'dmarc', 'all') {

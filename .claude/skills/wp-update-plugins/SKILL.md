@@ -1,6 +1,6 @@
 ---
 name: wp-update-plugins
-description: Check and update WordPress plugins, themes and translations on all Hostinger-hosted sites listed in sites.json, bump PHP via Hostinger, and process WordPress notification emails from Gmail, writing JSON results that build-report.js turns into an HTML report. Use when the user asks to update WordPress plugins, themes or translations, check for updates, or run the daily wordpressMonitor maintenance.
+description: Check and update WordPress plugins, themes and translations on all Hostinger-hosted sites listed in sites.json, and bump PHP via Hostinger, writing JSON results that build-report.js turns into an HTML report. Use when the user asks to update WordPress plugins, themes or translations, check for updates, or run the daily wordpressMonitor maintenance.
 ---
 
 # Update WordPress plugins, themes and translations (wordpressMonitor)
@@ -15,8 +15,7 @@ Let `<ts>` be the timestamp slug of the `<ts>-wp-update.json` the script
 writes (e.g. `2026-09-30-093000`); the extra JSON files below reuse it.
 
 If the skill argument is `check-only`, the run is a dry run: use
-`npm run wp:check`, never call `hosting_updatePHPVersionV1`, and do not
-trash any email.
+`npm run wp:check`, never call `hosting_updatePHPVersionV1`.
 
 **Language:** everything you write — JSON text fields (`summary`, `narrative`, `reason`,
 `note`, ...) and the final summary — must be in English.
@@ -85,45 +84,9 @@ trash any email.
    - If the Hostinger connector isn't available, write
      `{ "unavailable": true }`.
 
-6. Process WordPress notification emails from Gmail. Skip and write
-   `reports/<ts>-wp-mails.json` as `{ "unavailable": true }` if the Gmail
-   tools aren't available.
-   - Read `config.json` -> `gmail.labels.wordpress` (default
-     `wordpress`). `search_threads` with `label:"<label>"`, then `get_thread`
-     for each hit.
-   - Write `reports/<ts>-wp-mails.json`:
-
-     ```json
-     {
-       "label": "wordpress",
-       "mails": [
-         {
-           "threadId": "...",
-           "date": "...",
-           "from": "...",
-           "subject": "...",
-           "site": "...",
-           "kind": "auto-update|fatal-error|security|admin-notice|other",
-           "summary": "one line",
-           "actionNeeded": false
-         }
-       ],
-       "trashed": ["threadId"],
-       "trashFailed": ["threadId"]
-     }
-     ```
-
-     Deduce `site` from the sender/domain against `sites.json` names/paths
-     (`null` if unknown). `actionNeeded` is `true` for fatal errors /
-     recovery mode, security notices and admin-email-change notices.
-
-   - Normal run: after the JSON is written, `trash_thread` every thread that
-     was read successfully and list it in `trashed` (failures in
-     `trashFailed`; update the JSON). Check-only run: don't trash anything;
-     leave `trashed` empty.
-   - No threads under the label: write `"mails": []`.
-7. Print a short plain-text summary of what happened (sites, updates, PHP
-   bumps, emails processed). Never mention drafts, the HTML report or file paths
+6. Print a short plain-text summary of what happened (sites, updates, PHP
+   bumps). WordPress notification emails are handled by the runner
+   (`src/wp-mails-fetch.js`), not by this skill. Never mention drafts, the HTML report or file paths
    in it; the runner handles all of that.
 
 ## Prerequisites (mention if the run fails on credentials)

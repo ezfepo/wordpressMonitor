@@ -38,9 +38,12 @@ the corresponding commands (e.g. how to run a single test).
   excludeThemes, plus either `sshPassword` or `sshKeyPath` (+ optional
   `sshKeyPassphrase`) per site. Never committed.
 - `.claude/skills/wp-update-plugins/` — on-demand entry point (`/wp-update-plugins`): runs
-  the script, writes `<ts>-php.json` (PHP outcome) and `<ts>-wp-mails.json` (WordPress
-  notification emails read from the Gmail label in `config.json`, then trashed
-  unless check-only). It creates no Gmail drafts. It also has an **optional** step
+  the script and writes `<ts>-php.json` (PHP outcome). It creates no Gmail drafts.
+  WordPress notification emails are **not** handled by the skill: the runner calls
+  `node src/wp-mails-fetch.js [--dry-run]` after it (Gmail API via `src/lib/gmail.js`,
+  label `gmail.labels.wordpress`), which classifies Sucuri / Wordfence / Limit Login
+  Attempts / core notices by rules (`kind`, `actionNeeded`, `site` from `sites.json`),
+  writes `<ts>-wp-mails.json` and trashes the threads read (not with `--dry-run`). It also has an **optional** step
   (skipped silently if not set up — nothing else in the workflow depends on it): if the
   Hostinger MCP connector is connected in the session, it checks each site's PHP version
   against Hostinger's own available versions (`hosting_getPHPDetailsV1`, keyed by

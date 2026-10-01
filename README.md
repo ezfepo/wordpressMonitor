@@ -85,9 +85,9 @@ Without arguments it shows a menu (or pass `-Mode wp|dmarc|all|dryrun|dmarcdry`)
 
 **Update**
 
-1. **Update WordPress sites** — `/wp-update-plugins`: updates, PHP bump via
-   Hostinger and processing of WordPress notification emails (the Gmail
-   `wordpress` label, moved to the trash afterwards).
+1. **Update WordPress sites** — `/wp-update-plugins`: updates and PHP bump via
+   Hostinger, then `node src/wp-mails-fetch.js` processes the WordPress notification
+   emails (Gmail `wordpress` label, classified by rules, moved to the trash afterwards).
 2. **Process DMARC reports** — `node src/dmarc-fetch.js`: parses the reports under the Gmail
    `dmarc` label, adds highlights and moves the processed emails to the trash.
 3. **Do everything** — both.

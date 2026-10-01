@@ -15,6 +15,7 @@
     "wp:check-ssh": "node src/check-ssh.js",
     "gmail:auth": "node src/gmail-auth.js",
     "dmarc:fetch": "node src/dmarc-fetch.js",
+    "wp:mails": "node src/wp-mails-fetch.js",
     "dmarc:parse": "node src/parse-dmarc.js",
     "report": "node src/build-report.js"
   },

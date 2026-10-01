@@ -221,6 +221,66 @@ function wpSection(wp, php) {
     .join('')}</div></section>`;
 }
 
+// Per category: title and the criteria to decide what to do with the mails in
+// it. Verdicts come from src/wp-mails-fetch.js (discard | review | act).
+const CATEGORY_GUIDE = {
+  'wordfence-issues': {
+    title: 'Wordfence: problems found',
+    criteria:
+      'Act: Wordfence reports something other than pending updates (malware, modified core files, vulnerable plugin).'
+  },
+  'sucuri-security': {
+    title: 'Sucuri: security events',
+    criteria:
+      'Act: logins, file or setting changes. Check the IP; if it is not yours, change admin passwords.'
+  },
+  'fatal-error': {
+    title: 'PHP fatal errors / recovery mode',
+    criteria:
+      'Act: the site (or part of it) may be down. Use the recovery link and find the plugin/theme.'
+  },
+  'admin-notice': {
+    title: 'Admin notices',
+    criteria:
+      'Act unless you triggered it (admin email change = possible takeover).'
+  },
+  'sucuri-code': {
+    title: 'Sucuri: plugin/theme changes',
+    criteria:
+      'Review: who did it? Local IP (127.0.0.1) = server process, usually fine. Remote IP you do not recognize, or removal of a security plugin = act. The same change on several sites at once = bulk action, likely deliberate.'
+  },
+  'login-summary': {
+    title: 'Login security summaries (monthly)',
+    criteria:
+      'Discard when lockouts roughly match failed logins. Review when there are 200+ failed logins with zero lockouts (distributed brute force the plugin cannot block) or a High level with lockouts.'
+  },
+  'wordfence-updates': {
+    title: 'Wordfence: pending updates',
+    criteria:
+      'Discard: the updater applies them. Review only if the same plugin is still listed after an update run (the update may be failing or excluded).'
+  },
+  'sucuri-content': {
+    title: 'Sucuri: content changes',
+    criteria:
+      'Discard: routine post/page changes, often a scheduled task. Review only if nobody edited content and the IP is unfamiliar.'
+  },
+  'auto-update': {
+    title: 'WordPress auto-updates',
+    criteria: 'Discard: successful self-update.'
+  },
+  other: {
+    title: 'Other / unrecognized',
+    criteria:
+      'Review: no rule matched. Read it once; if it recurs, add a rule in src/wp-mails-fetch.js.'
+  }
+};
+const VERDICT_RANK = { act: 0, review: 1, discard: 2 };
+
+function mailRow(m, trashed) {
+  const verdict = m.verdict || (m.actionNeeded ? 'act' : 'review');
+  return `<tr class="${verdict === 'act' ? 'row-bad' : ''}"><td>${esc(m.date.slice(0, 16).replace('T', ' '))}</td><td>${esc(m.site || '-')}</td><td><span class="pill ${verdict}">${verdict}</span></td><td>${esc(m.summary)}${m.advice ? `<div class="muted">${esc(m.advice)}</div>` : ''}</td><td>${trashed.has(m.threadId) ? 'trashed' : 'kept'}</td></tr>`;
+}
+
 function mailsSection(mails) {
   if (!mails) return '';
   if (mails.data.unavailable) {
@@ -231,12 +291,32 @@ function mailsSection(mails) {
     return `<section><h2>WordPress emails</h2><p class="muted">No emails under label "${esc(mails.data.label)}".</p></section>`;
   }
   const trashed = new Set(mails.data.trashed || []);
-  return `<section><h2>WordPress emails</h2><table><thead><tr><th>Date</th><th>Site</th><th>Type</th><th>Subject</th><th>Summary</th><th>Trash</th></tr></thead><tbody>${list
-    .map(
-      m =>
-        `<tr class="${m.actionNeeded ? 'row-bad' : ''}"><td>${esc(m.date)}</td><td>${esc(m.site || '-')}</td><td>${esc(m.kind)}</td><td>${esc(m.subject)}</td><td>${esc(m.summary)}</td><td>${trashed.has(m.threadId) ? 'trashed' : 'kept'}</td></tr>`
-    )
-    .join('')}</tbody></table></section>`;
+  const groups = new Map();
+  for (const m of list) {
+    const key = m.category || m.kind || 'other';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m);
+  }
+  const worst = items =>
+    Math.min(...items.map(m => VERDICT_RANK[m.verdict || 'review']));
+  const count = v => list.filter(m => (m.verdict || 'review') === v).length;
+  const ordered = [...groups.entries()].sort(
+    (a, b) => worst(a[1]) - worst(b[1]) || b[1].length - a[1].length
+  );
+  const blocks = ordered.map(([key, items]) => {
+    const guide = CATEGORY_GUIDE[key] || {
+      title: key,
+      criteria: 'No criteria defined for this category.'
+    };
+    const allDiscard = worst(items) === VERDICT_RANK.discard;
+    const rows = items.map(m => mailRow(m, trashed)).join('');
+    const table = `<table><thead><tr><th>Date</th><th>Site</th><th>Verdict</th><th>Detail</th><th>Trash</th></tr></thead><tbody>${rows}</tbody></table>`;
+    const head = `<h3>${esc(guide.title)} <span class="muted">(${items.length})</span></h3><p class="muted">${esc(guide.criteria)}</p>`;
+    return allDiscard
+      ? `<details><summary><strong>${esc(guide.title)}</strong> <span class="muted">(${items.length}) &mdash; safe to discard</span></summary><p class="muted">${esc(guide.criteria)}</p>${table}</details>`
+      : head + table;
+  });
+  return `<section><h2>WordPress emails</h2><p class="muted">${count('act')} to act on, ${count('review')} to review, ${count('discard')} safe to discard.</p>${blocks.join('')}</section>`;
 }
 
 function dmarcSection(dmarc) {
@@ -307,7 +387,7 @@ table{width:100%;border-collapse:collapse;font-size:14px;display:block;overflow-
 th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 .row-bad{background:var(--badbg)}
 .pill{font-size:12px;padding:1px 8px;border-radius:99px;border:1px solid var(--line);font-weight:600}
-.pill.ok{color:var(--ok)}.pill.partial,.pill.attention,.pill.attention-needed{color:var(--warn)}.pill.failed,.pill.unreachable,.pill.alert{color:var(--bad)}
+.pill.ok{color:var(--ok)}.pill.partial,.pill.attention,.pill.attention-needed{color:var(--warn)}.pill.failed,.pill.unreachable,.pill.alert,.pill.act{color:var(--bad)}.pill.review{color:var(--warn)}.pill.discard{color:var(--muted)}
 .action{background:var(--badbg);border:1px solid var(--bad);border-radius:8px;padding:8px 16px}
 .stats{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 14px;min-width:110px}

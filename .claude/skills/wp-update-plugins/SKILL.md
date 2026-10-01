@@ -11,7 +11,7 @@ files in `reports/`; the runner (`.claude/scripts/run-daily-update.ps1`)
 then builds and opens the HTML report with `src/build-report.js`. **Do not
 create Gmail drafts or emails** — the report is the HTML file.
 
-Let `<ts>` be the timestamp slug of the `wp-update-<ts>.json` the script
+Let `<ts>` be the timestamp slug of the `<ts>-wp-update.json` the script
 writes (e.g. `2026-09-30-093000`); the extra JSON files below reuse it.
 
 If the skill argument is `check-only`, the run is a dry run: use
@@ -29,11 +29,11 @@ trash any email.
    - To target one site: `node src/update-plugins.js --site <name>` (add
      `--dry-run` for check-only).
 2. Run the command from the repo root. It prints a summary and writes two
-   report files to `reports/`: `wp-update-<timestamp>.md` (summary) and
+   report files to `reports/`: `<timestamp>-wp-update.md` (summary) and
    `.json` (full detail). Exit code 1 means at least one site failed or was
    unreachable — still continue to the reporting step and include the
    failures.
-3. Read the newest `reports/wp-update-*.md` file.
+3. Read the newest `reports/*-wp-update.md` file.
 4. **Optional step** — only runs if the Hostinger MCP connector's tools
    (`mcp__claude_ai_Hostinger_Connector__*`) are available in this session.
    If they aren't, skip straight to step 5; the report still has the
@@ -60,7 +60,7 @@ trash any email.
      → new version), skipped due to a flagged plugin/theme compatibility
      issue, already on the highest supported version, or the
      `hosting_updatePHPVersionV1` call itself failed (include the error).
-5. Write `reports/php-<ts>.json` with the per-site PHP outcome from step 4:
+5. Write `reports/<ts>-php.json` with the per-site PHP outcome from step 4:
 
    ```json
    {
@@ -86,12 +86,12 @@ trash any email.
      `{ "unavailable": true }`.
 
 6. Process WordPress notification emails from Gmail. Skip and write
-   `reports/wp-mails-<ts>.json` as `{ "unavailable": true }` if the Gmail
+   `reports/<ts>-wp-mails.json` as `{ "unavailable": true }` if the Gmail
    tools aren't available.
    - Read `config.json` -> `gmail.labels.wordpress` (default
      `wordpress`). `search_threads` with `label:"<label>"`, then `get_thread`
      for each hit.
-   - Write `reports/wp-mails-<ts>.json`:
+   - Write `reports/<ts>-wp-mails.json`:
 
      ```json
      {

@@ -38,7 +38,7 @@ the corresponding commands (e.g. how to run a single test).
   excludeThemes, plus either `sshPassword` or `sshKeyPath` (+ optional
   `sshKeyPassphrase`) per site. Never committed.
 - `.claude/skills/wp-update-plugins/` — on-demand entry point (`/wp-update-plugins`): runs
-  the script, writes `php-<ts>.json` (PHP outcome) and `wp-mails-<ts>.json` (WordPress
+  the script, writes `<ts>-php.json` (PHP outcome) and `<ts>-wp-mails.json` (WordPress
   notification emails read from the Gmail label in `config.json`, then trashed
   unless check-only). It creates no Gmail drafts. It also has an **optional** step
   (skipped silently if not set up — nothing else in the workflow depends on it): if the
@@ -70,7 +70,7 @@ the WordPress part is its own `claude -p` session); **Check only** (changes noth
 (`dryrun`, `/wp-update-plugins check-only`: nothing updated, no PHP bump, no emails
 trashed), 5 Check DMARC reports (`dmarcdry`, `dmarc-fetch.js --dry-run`: parses and reports
 but trashes nothing, so it can be repeated). When done,
-`src/build-report.js` merges the run's JSON into `reports/report-<ts>.html`, which is opened
+`src/build-report.js` merges the run's JSON into `reports/<ts>-report.html`, which is opened
 automatically. This replaced the old Gmail-draft report. `npm run report` rebuilds it by hand.
 
 - `config.json` (gitignored, template in `config.json.example`; every key is optional and
@@ -93,11 +93,11 @@ automatically. This replaced the old Gmail-draft report. `npm run report` rebuil
 
 ### Where the run output lives
 
-- `reports/report-<timestamp>.html` — the human report (action needed, sites, WordPress
+- `reports/<timestamp>-report.html` — the human report (action needed, sites, WordPress
   emails, DMARC highlights).
-- `reports/wp-update-*.md|json`, `php-*.json`, `wp-mails-*.json`, `dmarc-*.json` — the inputs
+- `reports/<ts>-wp-update.md|json`, `<ts>-php.json`, `<ts>-wp-mails.json`, `<ts>-dmarc.json` — the inputs
   the HTML is built from.
-- `.claude/logs/<wp-update|wp-check|dmarc-check>-<timestamp>.log` (+ `.jsonl` raw stream).
+- `.claude/logs/<timestamp>-<wp-update|wp-check|dmarc-check>.log` (+ `.jsonl` raw stream).
 - All gitignored.
 
 ## Formatting

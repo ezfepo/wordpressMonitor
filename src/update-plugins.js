@@ -689,8 +689,8 @@ async function main() {
 
   fs.mkdirSync(REPORTS_DIR, { recursive: true });
   const slug = timestampSlug(timestamp);
-  const jsonPath = path.join(REPORTS_DIR, `wp-update-${slug}.json`);
-  const mdPath = path.join(REPORTS_DIR, `wp-update-${slug}.md`);
+  const jsonPath = path.join(REPORTS_DIR, `${slug}-wp-update.json`);
+  const mdPath = path.join(REPORTS_DIR, `${slug}-wp-update.md`);
   fs.writeFileSync(
     jsonPath,
     JSON.stringify(

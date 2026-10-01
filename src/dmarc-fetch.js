@@ -1,5 +1,5 @@
 /**
- * DMARC step without Claude: Gmail API -> parse-dmarc -> reports/dmarc-<ts>.json.
+ * DMARC step without Claude: Gmail API -> parse-dmarc -> reports/<ts>-dmarc.json.
  *
  * Usage: node src/dmarc-fetch.js [--dry-run]
  *
@@ -95,7 +95,8 @@ function narrativeFor(out) {
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const label = loadLabel();
-  const outFile = path.join(REPORTS, `dmarc-${timestampSlug(new Date())}.json`);
+  const stamp = timestampSlug(new Date());
+  const outFile = path.join(REPORTS, `${stamp}-dmarc.json`);
   fs.mkdirSync(REPORTS, { recursive: true });
 
   const labelId = await gmail.findLabelId(label);
@@ -116,7 +117,7 @@ async function main() {
   const files = [];
   for (const threadId of threadIds) {
     for (const messageId of await gmail.getThreadMessageIds(threadId)) {
-      const file = path.join(TMP, `${messageId}.b64`);
+      const file = path.join(TMP, `${stamp}-${messageId}.b64`);
       fs.writeFileSync(file, await gmail.getRawMessage(messageId));
       threadOf.set(messageId, threadId);
       files.push(file);

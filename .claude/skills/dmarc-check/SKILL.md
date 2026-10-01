@@ -1,6 +1,6 @@
 ---
 name: dmarc-check
-description: Process DMARC aggregate reports from Gmail (label from config.json), parse them with src/parse-dmarc.js, write reports/dmarc-<ts>.json with highlights, and move the processed emails to trash. Use when the user asks to check or summarize DMARC reports or runs the wordpressMonitor DMARC step.
+description: Process DMARC aggregate reports from Gmail (label from config.json), parse them with src/parse-dmarc.js, write reports/<ts>-dmarc.json with highlights, and move the processed emails to trash. Use when the user asks to check or summarize DMARC reports or runs the wordpressMonitor DMARC step.
 ---
 
 # DMARC check (wordpressMonitor)
@@ -22,12 +22,12 @@ Let `<ts>` be the current local-time slug `YYYY-MM-DD-HHmmss`.
 
 1. Read `config.json` -> `gmail.labels.dmarc` (default `dmarc`).
    Call `search_threads` with `label:"<label>"`.
-2. No threads: write `reports/dmarc-<ts>.json` as
+2. No threads: write `reports/<ts>-dmarc.json` as
    `{ "reports": [], "note": "No new DMARC reports." }` and stop.
 3. For each thread, `get_message` with `messageFormat: RAW` and save the raw
-   field (base64**url**) to `.claude/tmp/dmarc/<messageId>.b64`. The Gmail
+   field (base64**url**) to `.claude/tmp/dmarc/<ts>-<messageId>.b64`. The Gmail
    connector has no attachment download, hence RAW.
-4. Run `node src/parse-dmarc.js .claude/tmp/dmarc/*.b64 --out reports/dmarc-<ts>.json --label <label>`.
+4. Run `node src/parse-dmarc.js .claude/tmp/dmarc/*.b64 --out reports/<ts>-dmarc.json --label <label>`.
    It classifies each source IP (Titan / Hostinger shared / unknown, from
    `config.json` (`dmarc.knownSources`)), computes `highlights` and a per-domain status
    (`ok`, `attention`, `alert`). A ZIP CRC warning is not an error.

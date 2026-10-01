@@ -11,7 +11,7 @@
 #   dryrun -> /wp-update-plugins check-only (nothing is changed or trashed)
 #   dmarcdry -> node src/dmarc-fetch.js --dry-run (parses reports, trashes nothing)
 # Afterwards src/build-report.js merges the run's JSON results into
-# reports/report-<ts>.html, which is opened automatically. Files older than
+# reports/<ts>-report.html, which is opened automatically. Files older than
 # retentionDays (config.json) are then deleted from .claude/tmp,
 # .claude/logs and reports.
 #
@@ -189,7 +189,7 @@ function Write-StreamEvent {
 function Invoke-ClaudeSkill {
   param([string]$Prompt, [string]$LogName, [string]$Title)
 
-  $logFile = Join-Path $logDir "$LogName-$runStamp.log"
+  $logFile = Join-Path $logDir "$runStamp-$LogName.log"
   $rawLog = "$logFile.jsonl"
   $script:CurrentTitle = $Title
   $script:SeenLabels.Clear()
@@ -215,7 +215,7 @@ function Invoke-ClaudeSkill {
 function Invoke-NodeScript {
   param([string[]]$NodeArgs, [string]$LogName, [string]$Title)
 
-  $logFile = Join-Path $logDir "$LogName-$runStamp.log"
+  $logFile = Join-Path $logDir "$runStamp-$LogName.log"
   $script:LogFiles += $logFile
   Write-Output "==> Started: $Title"
   & node @NodeArgs 2>&1 |

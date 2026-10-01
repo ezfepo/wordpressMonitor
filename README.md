@@ -74,7 +74,7 @@ node src/check-ssh.js --site <name>
 ```
 
 Each `wp:update` / `wp:check` run writes a timestamped report to `reports/`
-(`wp-update-<timestamp>.md` and `.json`, gitignored) and prints a console
+(`<timestamp>-wp-update.md` and `.json`, gitignored) and prints a console
 summary. One site or category failing doesn't stop the others; the process
 exits with code `1` if any site ended up in a non-OK state.
 
@@ -99,7 +99,7 @@ Without arguments it shows a menu (or pass `-Mode wp|dmarc|all|dryrun|dmarcdry`)
 5. **Check DMARC reports** — parses and reports but trashes nothing, so it can be
    repeated (`-Mode dmarcdry`).
 
-When it finishes it builds `reports/report-<timestamp>.html` (via
+When it finishes it builds `reports/<timestamp>-report.html` (via
 `src/build-report.js`) and opens it, then deletes files older than
 `retentionDays`. Logs go to `.claude/logs/` (gitignored). No Gmail drafts are
 created. You can also invoke `/wp-update-plugins` or `/dmarc-check` (the interactive DMARC variant) directly in a

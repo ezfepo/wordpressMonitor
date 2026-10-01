@@ -1,12 +1,12 @@
 /**
  * Builds a self-contained HTML report from the JSON files a run leaves in
- * reports/: wp-update-*, php-*, wp-mails-* and dmarc-*.
+ * reports/: <ts>-wp-update, <ts>-php, <ts>-wp-mails and <ts>-dmarc.
  *
  * Usage:
  *   node src/build-report.js [--since <ISO date>] [--mode <mode>] [--logs a,b]
  *
  * Only files modified at or after --since are included (default: all).
- * Prints the path of the generated reports/report-<ts>.html.
+ * Prints the path of the generated reports/<ts>-report.html.
  */
 
 const fs = require('node:fs');
@@ -38,11 +38,13 @@ function esc(value) {
 }
 
 // Newest matching JSON file (mtime >= since), parsed, plus its path.
-function latest(prefix, since) {
+function latest(name, since) {
   if (!fs.existsSync(REPORTS_DIR)) return null;
   const candidates = fs
     .readdirSync(REPORTS_DIR)
-    .filter(f => f.startsWith(prefix) && f.endsWith('.json'))
+    .filter(f =>
+      new RegExp(`^\\d{4}-\\d{2}-\\d{2}-\\d{6}-${name}\\.json$`).test(f)
+    )
     .map(f => {
       const full = path.join(REPORTS_DIR, f);
       return { full, mtime: fs.statSync(full).mtimeMs };
@@ -342,14 +344,14 @@ ${action}${empty}${wpSection(wp, php)}${mailsSection(mails)}${dmarcSection(dmarc
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   const data = {
-    wp: latest('wp-update-', opts.since),
-    php: latest('php-', opts.since),
-    mails: latest('wp-mails-', opts.since),
-    dmarc: latest('dmarc-', opts.since)
+    wp: latest('wp-update', opts.since),
+    php: latest('php', opts.since),
+    mails: latest('wp-mails', opts.since),
+    dmarc: latest('dmarc', opts.since)
   };
   const now = new Date();
   fs.mkdirSync(REPORTS_DIR, { recursive: true });
-  const out = path.join(REPORTS_DIR, `report-${timestampSlug(now)}.html`);
+  const out = path.join(REPORTS_DIR, `${timestampSlug(now)}-report.html`);
   fs.writeFileSync(out, buildHtml(data, opts, now));
   console.log(out);
 }

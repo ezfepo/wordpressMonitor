@@ -1,6 +1,6 @@
 /**
  * Builds a self-contained HTML report from the JSON files a run leaves in
- * reports/: <ts>-wp-update, <ts>-php, <ts>-wp-mails and <ts>-dmarc.
+ * reports/: <ts>-wp-update, <ts>-php, <ts>-wp-mails, <ts>-dmarc and <ts>-vuln.
  *
  * Usage:
  *   node src/build-report.js [--since <ISO date>] [--mode <mode>] [--logs a,b]
@@ -64,7 +64,7 @@ function latest(name, since) {
 
 // ---- Action needed --------------------------------------------------------
 
-function collectActions(wp, php, mails, dmarc) {
+function collectActions(wp, php, mails, dmarc, vuln) {
   const actions = [];
   if (wp) {
     for (const r of wp.data.results) {
@@ -127,6 +127,13 @@ function collectActions(wp, php, mails, dmarc) {
     for (const f of dmarc.data.failed || []) {
       actions.push(
         `DMARC: could not parse message ${f.messageId} (${f.error}); left in Gmail.`
+      );
+    }
+  }
+  if (vuln && vuln.data.flagged) {
+    for (const v of vuln.data.flagged) {
+      actions.push(
+        `${v.site}: ${v.kind} "${v.slug}" ${v.installedVersion} has a known vulnerability (${v.sources.join(', ') || 'see report'})${v.unfixed ? ' — no fix released' : v.fixedIn ? `, fixed in ${v.fixedIn}` : ''}.`
       );
     }
   }
@@ -377,6 +384,27 @@ function dmarcSection(dmarc) {
   return `<section><h2>DMARC</h2><h3>Highlights</h3>${narrative}<div class="stats">${cards}</div>${range}${domains}${trashed}${failed}${warns.length ? `<ul>${warns.join('')}</ul>` : ''}</section>`;
 }
 
+function vulnSection(vuln) {
+  if (!vuln) return '';
+  if (vuln.data.unavailable) {
+    return `<section><h2>Known vulnerabilities</h2><p class="muted">${esc(vuln.data.reason || 'Vulnerability check unavailable.')}</p></section>`;
+  }
+  const flagged = vuln.data.flagged || [];
+  if (flagged.length === 0) {
+    return `<section><h2>Known vulnerabilities</h2><p class="muted">${esc(vuln.data.checked ?? 0)} plugin/theme install(s) checked against WPVulnerability.net; none flagged.</p></section>`;
+  }
+  const rows = flagged
+    .map(
+      v =>
+        `<tr class="row-bad"><td>${esc(v.site)}</td><td>${esc(v.kind)}</td><td>${esc(v.slug)}</td><td>${esc(v.installedVersion)}</td><td>${v.unfixed ? 'no fix released' : v.fixedIn ? `fixed in ${esc(v.fixedIn)}` : '-'}</td><td>${esc((v.sources || []).join(', '))}</td></tr>`
+    )
+    .join('');
+  const errors = (vuln.data.errors || []).length
+    ? `<p class="muted">${vuln.data.errors.length} lookup error(s): ${esc(vuln.data.errors.join('; '))}</p>`
+    : '';
+  return `<section><h2>Known vulnerabilities</h2><p class="muted">${esc(vuln.data.checked ?? 0)} plugin/theme install(s) checked against <a href="https://www.wpvulnerability.net/">WPVulnerability.net</a>, ${flagged.length} flagged.</p><table><thead><tr><th>Site</th><th>Kind</th><th>Slug</th><th>Installed</th><th>Fix</th><th>Sources</th></tr></thead><tbody>${rows}</tbody></table>${errors}</section>`;
+}
+
 // ---- Page -----------------------------------------------------------------
 
 const CSS = `
@@ -402,13 +430,13 @@ th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);vertic
 footer{margin-top:32px;font-size:13px}
 `;
 
-function buildHtml({ wp, php, mails, dmarc }, opts, now) {
-  const actions = collectActions(wp, php, mails, dmarc);
+function buildHtml({ wp, php, mails, dmarc, vuln }, opts, now) {
+  const actions = collectActions(wp, php, mails, dmarc, vuln);
   const action = actions.length
     ? `<section class="action"><h2>Action needed</h2><ul>${actions.map(a => `<li>${esc(a)}</li>`).join('')}</ul></section>`
     : '';
   const status = actions.length ? 'ACTION NEEDED' : 'All clear';
-  const files = [wp, php, mails, dmarc]
+  const files = [wp, php, mails, dmarc, vuln]
     .filter(Boolean)
     .map(f => esc(f.path))
     .concat(opts.logs.map(esc));
@@ -422,7 +450,7 @@ function buildHtml({ wp, php, mails, dmarc }, opts, now) {
 <body><main>
 <h1>wordpressMonitor report</h1>
 <p class="muted">${esc(formatTimestamp(now))} &middot; mode: ${esc(opts.mode || 'n/a')} &middot; <strong>${status}</strong></p>
-${action}${empty}${wpSection(wp, php)}${mailsSection(mails)}${dmarcSection(dmarc)}
+${action}${empty}${wpSection(wp, php)}${vulnSection(vuln)}${mailsSection(mails)}${dmarcSection(dmarc)}
 <footer class="muted"><p>Files:</p><ul>${files.map(f => `<li>${f}</li>`).join('')}</ul></footer>
 </main></body></html>
 `;
@@ -434,7 +462,8 @@ function main() {
     wp: latest('wp-update', opts.since),
     php: latest('php', opts.since),
     mails: latest('wp-mails', opts.since),
-    dmarc: latest('dmarc', opts.since)
+    dmarc: latest('dmarc', opts.since),
+    vuln: latest('vuln', opts.since)
   };
   const now = new Date();
   fs.mkdirSync(REPORTS_DIR, { recursive: true });

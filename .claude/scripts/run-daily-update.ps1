@@ -6,12 +6,13 @@
 #
 # Each mode runs one or more Claude Code skills headlessly (claude -p):
 #   wp     -> /wp-update-plugins (updates) + node src/php-check.js (PHP bump via
-#             Hostinger API, no Claude) + node src/wp-mails-fetch.js (WordPress
-#             emails, no Claude)
+#             Hostinger API, no Claude) + node src/vuln-check.js (known
+#             vulnerabilities via WPVulnerability.net, no Claude, read-only) +
+#             node src/wp-mails-fetch.js (WordPress emails, no Claude)
 #   dmarc  -> node src/dmarc-fetch.js (DMARC reports from Gmail API, no Claude)
 #   all    -> both, in separate sessions
-#   dryrun -> /wp-update-plugins check-only + node src/php-check.js --dry-run
-#             (nothing is changed or trashed)
+#   dryrun -> /wp-update-plugins check-only + node src/php-check.js --dry-run +
+#             node src/vuln-check.js (nothing is changed or trashed)
 #   dmarcdry -> node src/dmarc-fetch.js --dry-run (parses reports, trashes nothing)
 # Afterwards src/build-report.js merges the run's JSON results into
 # reports/<ts>-report.html, which is opened automatically. Files older than
@@ -248,6 +249,8 @@ try {
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
     Invoke-NodeScript -NodeArgs @('src/php-check.js') -LogName 'php-check' -Title 'Check PHP versions'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+    Invoke-NodeScript -NodeArgs @('src/vuln-check.js') -LogName 'vuln-check' -Title 'Check known vulnerabilities'
+    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
     Invoke-NodeScript -NodeArgs @('src/wp-mails-fetch.js') -LogName 'wp-mails' -Title 'Process WordPress emails'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
   }
@@ -255,6 +258,8 @@ try {
     Invoke-ClaudeSkill -Prompt '/wp-update-plugins check-only' -LogName 'wp-check' -Title 'Check WordPress sites'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
     Invoke-NodeScript -NodeArgs @('src/php-check.js', '--dry-run') -LogName 'php-check' -Title 'Check PHP versions'
+    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+    Invoke-NodeScript -NodeArgs @('src/vuln-check.js') -LogName 'vuln-check' -Title 'Check known vulnerabilities'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
     Invoke-NodeScript -NodeArgs @('src/wp-mails-fetch.js', '--dry-run') -LogName 'wp-mails' -Title 'Check WordPress emails'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)

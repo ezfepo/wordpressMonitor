@@ -422,7 +422,13 @@ async function runWithConcurrency(items, limit, fn) {
 }
 
 function emptySection() {
-  return { available: [], updated: [], failed: [], excluded: [] };
+  return {
+    installed: [],
+    available: [],
+    updated: [],
+    failed: [],
+    excluded: []
+  };
 }
 
 async function processItemSection(
@@ -434,6 +440,12 @@ async function processItemSection(
   items
 ) {
   const section = emptySection();
+  // Full installed list (name + version), not just what has an update
+  // available — vuln-check.js reuses this instead of re-listing over SSH.
+  section.installed = items.map(item => ({
+    name: item.name,
+    version: item.version
+  }));
   const available = items.filter(item => item.update === 'available');
   section.available = available.map(item => ({
     name: item.name,

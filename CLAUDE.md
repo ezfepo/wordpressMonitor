@@ -83,18 +83,42 @@ the corresponding commands (e.g. how to run a single test).
   label `gmail.labels.wordpress`), which classifies Sucuri / Wordfence / Limit Login
   Attempts / core notices by rules (`kind`, `actionNeeded`, `site` from `sites.json`),
   writes `<ts>-wp-mails.json` and trashes the threads read (not with `--dry-run`).
+- `src/vuln-check.js` + `src/lib/version.js` — known-vulnerability check via the
+  [WPVulnerability.net API](https://docs.wpvulnerability.com/) (plain `fetch`, no Claude,
+  no API key: `/plugin/{slug}/` and `/theme/{slug}/` are public). Read-only — no
+  `--dry-run` distinction, nothing is ever changed or trashed. Reuses the newest
+  `<ts>-wp-update.json`'s `plugins.installed` / `themes.installed` (written by
+  `update-plugins.js`'s `listItems()`, which already fetches name+version for every
+  installed plugin/theme, not just ones with an update) instead of re-listing over SSH —
+  deduplicates slugs across all sites so each unique slug is queried once. Checked
+  plugins/themes include ones excluded from auto-update via `excludePlugins`/
+  `excludeThemes` in `sites.json`, since those are exactly the ones most likely to go
+  stale. For each vulnerability entry returned, the installed version is tested against
+  `operator.min_version`/`min_operator`/`max_version`/`max_operator` (PHP
+  `version_compare()`-style `lt/le/eq/ne/gt/ge`, via `satisfiesOperator()` in
+  `src/lib/version.js`); a slug the API doesn't recognize (HTTP 404 — a plugin not
+  hosted on WordPress.org, e.g. a premium plugin or an internal `_`-prefixed
+  mu-plugin-style name) is skipped quietly, not treated as an error. Writes
+  `reports/<ts>-vuln.json` as
+  `{"checked","flagged":[{"site","kind","slug","installedVersion","name","unfixed","fixedIn","sources"}],"skipped","errors"}`,
+  or `{"unavailable": true}` if no `wp-update.json` exists yet. `build-report.js` renders a
+  "Known vulnerabilities" section and feeds every flagged install into "Action needed"
+  (these are real, outstanding vulnerabilities — always an alert, unlike the PHP cache-
+  clear step above).
 
 ## Running on demand
 
 There is no scheduled automation. `.claude/scripts/run-daily-update.ps1` (triggered from a
 desktop `.bat`, see `wordpressMonitor Update.bat.example`) shows a menu, or takes
 `-Mode wp|dmarc|all|dryrun|dmarcdry`. Menu: **Update** — 1 Update WordPress sites
-(`/wp-update-plugins`, then `node src/php-check.js` and `node src/wp-mails-fetch.js`, neither
-needing Claude), 2 Process DMARC reports (`node src/dmarc-fetch.js`, no Claude), 3 Do everything (both;
-the WordPress part is its own `claude -p` session); **Check only** (changes nothing) — 4 Check WordPress sites
-(`dryrun`, `/wp-update-plugins check-only` + `php-check.js --dry-run` + `wp-mails-fetch.js --dry-run`:
-nothing updated, no PHP bump, no emails trashed), 5 Check DMARC reports (`dmarcdry`,
-`dmarc-fetch.js --dry-run`: parses and reports but trashes nothing, so it can be repeated). When done,
+(`/wp-update-plugins`, then `node src/php-check.js`, `node src/vuln-check.js` and
+`node src/wp-mails-fetch.js`, none needing Claude), 2 Process DMARC reports
+(`node src/dmarc-fetch.js`, no Claude), 3 Do everything (both; the WordPress part is its
+own `claude -p` session); **Check only** (changes nothing) — 4 Check WordPress sites
+(`dryrun`, `/wp-update-plugins check-only` + `php-check.js --dry-run` + `vuln-check.js` +
+`wp-mails-fetch.js --dry-run`: nothing updated, no PHP bump, no emails trashed),
+5 Check DMARC reports (`dmarcdry`, `dmarc-fetch.js --dry-run`: parses and reports but
+trashes nothing, so it can be repeated). When done,
 `src/build-report.js` merges the run's JSON into `reports/<ts>-report.html`, which is opened
 automatically. This replaced the old Gmail-draft report. `npm run report` rebuilds it by hand.
 
@@ -124,8 +148,8 @@ automatically. This replaced the old Gmail-draft report. `npm run report` rebuil
 
 - `reports/<timestamp>-report.html` — the human report (action needed, sites, WordPress
   emails, DMARC highlights).
-- `reports/<ts>-wp-update.md|json`, `<ts>-php.json`, `<ts>-wp-mails.json`, `<ts>-dmarc.json` — the inputs
-  the HTML is built from.
+- `reports/<ts>-wp-update.md|json`, `<ts>-php.json`, `<ts>-vuln.json`, `<ts>-wp-mails.json`,
+  `<ts>-dmarc.json` — the inputs the HTML is built from.
 - `.claude/logs/<timestamp>-<wp-update|wp-check|dmarc-check>.log` (+ `.jsonl` raw stream).
 - All gitignored.
 

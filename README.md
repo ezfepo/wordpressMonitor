@@ -95,10 +95,11 @@ Without arguments it shows a menu (or pass `-Mode wp|dmarc|all|dryrun|dmarcdry`)
 
 1. **Update WordPress sites** — `/wp-update-plugins`: updates plugins, themes
    and translations, then `node src/php-check.js` checks/bumps PHP via the
-   Hostinger API, then `node src/wp-mails-fetch.js` processes the WordPress
-   notification emails (Gmail `wordpress` label, classified by rules, moved to
-   the trash afterwards). None of these three steps need Claude except the
-   update itself.
+   Hostinger API, then `node src/vuln-check.js` checks every installed
+   plugin/theme against WPVulnerability.net's known-vulnerability database,
+   then `node src/wp-mails-fetch.js` processes the WordPress notification
+   emails (Gmail `wordpress` label, classified by rules, moved to the trash
+   afterwards). None of these steps need Claude except the update itself.
 2. **Process DMARC reports** — `node src/dmarc-fetch.js`: parses the reports under the Gmail
    `dmarc` label, adds highlights and moves the processed emails to the trash.
 3. **Do everything** — both.
@@ -106,7 +107,8 @@ Without arguments it shows a menu (or pass `-Mode wp|dmarc|all|dryrun|dmarcdry`)
 **Check only** (changes nothing)
 
 4. **Check WordPress sites** — nothing is updated, no PHP bump, no emails trashed
-   (`-Mode dryrun`).
+   (`-Mode dryrun`); the vulnerability check runs the same either way since it's
+   read-only.
 5. **Check DMARC reports** — parses and reports but trashes nothing, so it can be
    repeated (`-Mode dmarcdry`).
 
@@ -180,6 +182,15 @@ connector. It reuses the newest `<ts>-wp-update.json`'s `phpCompatibility`
 data instead of re-checking compatibility itself, and that same file's
 plugins/themes/translations `updated` lists to decide which sites get a
 cache clear.
+
+`src/vuln-check.js` queries the public
+[WPVulnerability.net API](https://docs.wpvulnerability.com/) (no API key
+needed for plugin/theme lookups) for every plugin and theme installed across
+all sites — including ones excluded from auto-update, since those are the
+most likely to go stale. It reuses the newest `<ts>-wp-update.json`'s
+installed-plugin/theme lists instead of listing over SSH again, and queries
+each unique slug only once even if it's installed on multiple sites. Flagged
+installs appear both in a dedicated report section and in "Action needed".
 
 `src/dmarc-fetch.js` reads the DMARC label through the Gmail API (`src/lib/gmail.js`), runs the parser, writes a rule-based narrative and trashes the parsed threads (not with `--dry-run`). It needs a one-time setup: create a Google Cloud project with the Gmail API enabled and an OAuth client of type **Desktop app** (publish the consent screen "In production", otherwise the refresh token expires after 7 days), then run `npm run gmail:auth`, which saves the resulting OAuth credentials to `gmail.auth` in `config.json`.
 

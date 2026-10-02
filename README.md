@@ -38,21 +38,26 @@ over SSH and has WP-CLI available.
    `sites.json` is never committed — it's gitignored, since it holds both
    site info and credentials.
 
-3. Optional: configure local settings — copy the example:
+3. Configure local settings and credentials — copy the example:
 
    ```sh
    cp config.json.example config.json
    ```
 
-   `config.json` is gitignored and every key is optional (defaults apply if the
-   file or a key is missing):
+   `config.json` is gitignored. It's the **one file for everything local**:
+   non-secret settings (retention, Gmail labels, DMARC known senders) and
+   credentials (Gmail OAuth tokens, Hostinger API token) live side by side in
+   it, so there's a single file to back up or move to a new machine. Every key
+   is optional (defaults apply if the file or a key is missing):
 
-   | Key                      | Default     | Meaning                                                                                                                             |
-   | ------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-   | `retentionDays`          | `3`         | After each run, files older than this are deleted from `.claude/tmp/`, `.claude/logs/` and `reports/`.                              |
-   | `gmail.labels.dmarc`     | `dmarc`     | Gmail label holding the DMARC aggregate report emails.                                                                              |
-   | `gmail.labels.wordpress` | `wordpress` | Gmail label holding WordPress notification emails.                                                                                  |
-   | `dmarc.knownSources`     | none        | Your legitimate senders: `{ "name", "match": [...] }`. Each `match` is a hostname suffix (reverse DNS) or an IP prefix, plain text. |
+   | Key                      | Default     | Meaning                                                                                                                                                              |
+   | ------------------------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `retentionDays`          | `3`         | After each run, files older than this are deleted from `.claude/tmp/`, `.claude/logs/` and `reports/`.                                                               |
+   | `gmail.labels.dmarc`     | `dmarc`     | Gmail label holding the DMARC aggregate report emails.                                                                                                               |
+   | `gmail.labels.wordpress` | `wordpress` | Gmail label holding WordPress notification emails.                                                                                                                   |
+   | `gmail.auth`             | none        | `{ clientId, clientSecret, refreshToken }` — OAuth credentials for the Gmail API. Written by `npm run gmail:auth` (see below); you don't normally edit this by hand. |
+   | `hostinger.apiToken`     | none        | Hostinger API token (see below). Without it, PHP version checking/bumping is skipped.                                                                                |
+   | `dmarc.knownSources`     | none        | Your legitimate senders: `{ "name", "match": [...] }`. Each `match` is a hostname suffix (reverse DNS) or an IP prefix, plain text.                                  |
 
    A DMARC source that matches and passes alignment is `ok`; one that matches but
    fails is `known-unaligned` (domain status `attention`); one that doesn't match
@@ -85,9 +90,12 @@ Without arguments it shows a menu (or pass `-Mode wp|dmarc|all|dryrun|dmarcdry`)
 
 **Update**
 
-1. **Update WordPress sites** — `/wp-update-plugins`: updates and PHP bump via
-   Hostinger, then `node src/wp-mails-fetch.js` processes the WordPress notification
-   emails (Gmail `wordpress` label, classified by rules, moved to the trash afterwards).
+1. **Update WordPress sites** — `/wp-update-plugins`: updates plugins, themes
+   and translations, then `node src/php-check.js` checks/bumps PHP via the
+   Hostinger API, then `node src/wp-mails-fetch.js` processes the WordPress
+   notification emails (Gmail `wordpress` label, classified by rules, moved to
+   the trash afterwards). None of these three steps need Claude except the
+   update itself.
 2. **Process DMARC reports** — `node src/dmarc-fetch.js`: parses the reports under the Gmail
    `dmarc` label, adds highlights and moves the processed emails to the trash.
 3. **Do everything** — both.
@@ -106,16 +114,15 @@ created. You can also invoke `/wp-update-plugins` or `/dmarc-check` (the interac
 Claude Code session. `wordpressMonitor Update.bat.example` is a sample
 double-click shortcut for the runner.
 
-**Optional:** if the [Hostinger MCP connector](https://docs.hostinger.com/hostinger-connector/overview)
-is connected in the session, the skill also checks each site's PHP version
-against Hostinger's own list of available versions — this catches "a newer
-PHP version is available" (matching hPanel's own notice), which the
-WP-CLI-based PHP check below can't see. Nothing else in this workflow
-depends on the connector; this step is skipped silently if it isn't set up.
+**Optional:** `src/php-check.js` needs `hostinger.apiToken` set in `config.json`
+(generate one at [hPanel → API](https://hpanel.hostinger.com/profile/api)). If
+it's missing, the step writes `{ "unavailable": true }` and is skipped —
+nothing else in this workflow depends on it.
 
-When a newer version is available **and** no plugin/theme on that site was
-flagged by the WP-CLI PHP compatibility check, the skill auto-applies the PHP
-update via `hosting_updatePHPVersionV1` (jumping to the highest supported
+For each site, it compares the running PHP version to the highest version
+Hostinger supports. When a newer version is available **and** no plugin/theme
+on that site was flagged by the WP-CLI PHP compatibility check (below), it
+auto-applies the bump via the Hostinger API (jumping to the highest supported
 version) with no confirmation prompt — this runs unattended on every
 invocation, including headless/scheduled runs. A successful bump is reported
 as routine info in the report, not as something needing action. If a
@@ -123,6 +130,10 @@ plugin/theme was flagged (or the update call itself fails), it's skipped and
 reported as an alert instead so it can be reviewed manually first.
 
 ## How it works
+
+`src/lib/config.js` reads and writes `config.json`, the one gitignored file
+holding both local settings and credentials (Gmail OAuth tokens, Hostinger API
+token). Every script that needs a setting or a credential goes through it.
 
 `src/update-plugins.js` connects to each site over SSH ([`ssh2`](https://github.com/mscdex/ssh2))
 and runs WP-CLI to detect and apply updates in three categories:
@@ -147,7 +158,12 @@ Either check finding something marks the site `attention-needed` in the
 report, and the HTML report leads with an "Action needed" section summarizing
 what to review.
 
-`src/dmarc-fetch.js` reads the DMARC label through the Gmail API (`src/lib/gmail.js`), runs the parser, writes a rule-based narrative and trashes the parsed threads (not with `--dry-run`). It needs a one-time setup: create a Google Cloud project with the Gmail API enabled and an OAuth client of type **Desktop app** (publish the consent screen "In production", otherwise the refresh token expires after 7 days), then run `npm run gmail:auth`, which saves `gmail-auth.json` (gitignored).
+`src/php-check.js` reads `src/lib/hostinger.js` (plain `fetch`, no
+dependencies) to call the Hostinger API directly — no Claude, no MCP
+connector. It reuses the newest `<ts>-wp-update.json`'s `phpCompatibility`
+data instead of re-checking compatibility itself.
+
+`src/dmarc-fetch.js` reads the DMARC label through the Gmail API (`src/lib/gmail.js`), runs the parser, writes a rule-based narrative and trashes the parsed threads (not with `--dry-run`). It needs a one-time setup: create a Google Cloud project with the Gmail API enabled and an OAuth client of type **Desktop app** (publish the consent screen "In production", otherwise the refresh token expires after 7 days), then run `npm run gmail:auth`, which saves the resulting OAuth credentials to `gmail.auth` in `config.json`.
 
 `src/parse-dmarc.js` decodes DMARC aggregate report emails (base64url RAW
 message → zip/gzip → XML), classifies each source IP against

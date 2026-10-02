@@ -5,10 +5,13 @@
 # Check only: 4 WordPress, 5 DMARC).
 #
 # Each mode runs one or more Claude Code skills headlessly (claude -p):
-#   wp     -> /wp-update-plugins   (updates, PHP bump) + node src/wp-mails-fetch.js (WordPress emails, no Claude)
+#   wp     -> /wp-update-plugins (updates) + node src/php-check.js (PHP bump via
+#             Hostinger API, no Claude) + node src/wp-mails-fetch.js (WordPress
+#             emails, no Claude)
 #   dmarc  -> node src/dmarc-fetch.js (DMARC reports from Gmail API, no Claude)
 #   all    -> both, in separate sessions
-#   dryrun -> /wp-update-plugins check-only (nothing is changed or trashed)
+#   dryrun -> /wp-update-plugins check-only + node src/php-check.js --dry-run
+#             (nothing is changed or trashed)
 #   dmarcdry -> node src/dmarc-fetch.js --dry-run (parses reports, trashes nothing)
 # Afterwards src/build-report.js merges the run's JSON results into
 # reports/<ts>-report.html, which is opened automatically. Files older than
@@ -90,10 +93,9 @@ $runStart = Get-Date
 $runStamp = $runStart.ToString('yyyy-MM-dd-HHmmss')
 
 # Friendly labels for the tools this workflow actually uses, so progress
-# reads like a task list instead of raw tool/API names. Several Gmail calls
-# and repeated per-site Hostinger PHP-check calls collapse to one line each
-# (via $SuppressAfterFirst) so the log reads as one step, not a burst of near
-# -identical lines.
+# reads like a task list instead of raw tool/API names. Repeated per-thread
+# Gmail calls collapse to one line each (via $SuppressAfterFirst) so the log
+# reads as one step, not a burst of near-identical lines.
 $ToolLabels = @{
   Bash                                 = 'Running scripts'
   Read                                 = 'Reading results'
@@ -102,15 +104,10 @@ $ToolLabels = @{
   Glob                                 = 'Reading results'
   Grep                                 = 'Reading results'
   Edit                                 = 'Saving results'
-  'mcp__claude_ai_Hostinger_Connector__search'        = 'Checking PHP versions with Hostinger'
-  'mcp__claude_ai_Hostinger_Connector__execute'       = 'Checking PHP versions with Hostinger'
-  'mcp__claude_ai_Hostinger_Connector__multi-execute' = 'Checking PHP versions with Hostinger'
   mcp__claude_ai_Gmail__search_threads = 'Reading Gmail'
   mcp__claude_ai_Gmail__get_thread     = 'Reading Gmail'
   mcp__claude_ai_Gmail__get_message    = 'Reading Gmail'
   mcp__claude_ai_Gmail__trash_thread   = 'Sending processed emails to trash'
-  'mcp__claude_ai_Hostinger_Connector__hosting_getPHPDetailsV1'    = 'Checking PHP versions with Hostinger'
-  'mcp__claude_ai_Hostinger_Connector__hosting_updatePHPVersionV1' = 'Updating PHP versions with Hostinger'
 }
 
 # Labels in here print only the first time they're seen per skill run;
@@ -120,8 +117,6 @@ $SuppressAfterFirst = @(
   'Reading results',
   'Reading Gmail',
   'Sending processed emails to trash',
-  'Checking PHP versions with Hostinger',
-  'Updating PHP versions with Hostinger',
   'Saving results'
 )
 $SeenLabels = New-Object 'System.Collections.Generic.HashSet[string]'
@@ -251,11 +246,15 @@ try {
   if ($Mode -in 'wp', 'all') {
     Invoke-ClaudeSkill -Prompt '/wp-update-plugins' -LogName 'wp-update' -Title 'Update WordPress sites'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+    Invoke-NodeScript -NodeArgs @('src/php-check.js') -LogName 'php-check' -Title 'Check PHP versions'
+    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
     Invoke-NodeScript -NodeArgs @('src/wp-mails-fetch.js') -LogName 'wp-mails' -Title 'Process WordPress emails'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
   }
   if ($Mode -eq 'dryrun') {
     Invoke-ClaudeSkill -Prompt '/wp-update-plugins check-only' -LogName 'wp-check' -Title 'Check WordPress sites'
+    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+    Invoke-NodeScript -NodeArgs @('src/php-check.js', '--dry-run') -LogName 'php-check' -Title 'Check PHP versions'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
     Invoke-NodeScript -NodeArgs @('src/wp-mails-fetch.js', '--dry-run') -LogName 'wp-mails' -Title 'Check WordPress emails'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)

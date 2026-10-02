@@ -16,6 +16,7 @@ const path = require('node:path');
 const gmail = require('./lib/gmail');
 const { decodeHeader, parseMessage } = require('./lib/mime');
 const { timestampSlug } = require('./lib/format');
+const { readConfig } = require('./lib/config');
 
 const ROOT = path.resolve(__dirname, '..');
 const REPORTS = path.join(ROOT, 'reports');
@@ -29,7 +30,7 @@ function readJson(file) {
 }
 
 function loadLabel() {
-  return readJson('config.json')?.gmail?.labels?.wordpress || 'wordpress';
+  return readConfig().gmail?.labels?.wordpress || 'wordpress';
 }
 
 // [{ name, domain }] from sites.json (domain = folder inside wpPath).

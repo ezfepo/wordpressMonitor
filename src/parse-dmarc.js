@@ -23,8 +23,7 @@ const zlib = require('node:zlib');
 const dns = require('node:dns').promises;
 const { formatTimestamp } = require('./lib/format');
 const { collectParts } = require('./lib/mime');
-
-const ROOT = path.resolve(__dirname, '..');
+const { readConfig } = require('./lib/config');
 
 function parseArgs(argv) {
   const opts = { files: [], out: null, label: 'dmarc' };
@@ -171,14 +170,7 @@ function loadReportFromFile(file) {
 // ---- Classification -------------------------------------------------------
 
 function loadSources() {
-  try {
-    const config = JSON.parse(
-      fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8')
-    );
-    return config.dmarc?.knownSources || [];
-  } catch {
-    return [];
-  }
+  return readConfig().dmarc?.knownSources || [];
 }
 
 async function reverseName(ip) {

@@ -11,9 +11,7 @@ Thumbs.db
 # See sites.json.example
 sites.json
 
-# Local settings (Gmail labels, DMARC known senders, retention) — personal, never commit
+# Local settings and credentials (Gmail labels, DMARC known senders,
+# retention, Gmail OAuth tokens, Hostinger API token) — personal, never commit
 # See config.json.example
 config.json
-
-# Gmail OAuth client + refresh token — never commit (see src/gmail-auth.js)
-gmail-auth.json

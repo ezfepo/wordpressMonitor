@@ -14,8 +14,8 @@ emails) and moves the processed ones to the trash.
 - Emails are parsed locally on the owner's machine to build a report.
 - Nothing is sent to any third party, and no data is shared, sold or used for
   advertising or analytics.
-- OAuth credentials are stored locally in `gmail-auth.json`, which is excluded
-  from version control.
+- OAuth credentials are stored locally in `config.json` (`gmail.auth`), which
+  is excluded from version control.
 
 ## Retention
 

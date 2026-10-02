@@ -1,26 +1,23 @@
 /**
  * Minimal Gmail API client (plain fetch, no dependencies).
  *
- * Credentials live in gmail-auth.json (gitignored, created by
+ * Credentials live in config.json's "gmail.auth" (gitignored, created by
  * `npm run gmail:auth`): { clientId, clientSecret, refreshToken }.
  * Scope gmail.modify is needed to trash threads.
  */
 
-const fs = require('node:fs');
-const path = require('node:path');
+const { readConfig } = require('./config');
 
-const ROOT = path.resolve(__dirname, '..', '..');
-const AUTH_FILE = path.join(ROOT, 'gmail-auth.json');
 const API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SCOPE = 'https://www.googleapis.com/auth/gmail.modify';
 
 function loadAuth() {
-  try {
-    return JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
-  } catch {
-    throw new Error('gmail-auth.json not found. Run: npm run gmail:auth');
+  const auth = readConfig().gmail?.auth;
+  if (!auth) {
+    throw new Error('config.json has no gmail.auth. Run: npm run gmail:auth');
   }
+  return auth;
 }
 
 let cached = null;
@@ -30,7 +27,7 @@ async function accessToken() {
   const auth = loadAuth();
   if (!auth.refreshToken) {
     throw new Error(
-      'gmail-auth.json has no refreshToken. Run: npm run gmail:auth'
+      'config.json gmail.auth has no refreshToken. Run: npm run gmail:auth'
     );
   }
   const res = await fetch(TOKEN_URL, {
@@ -115,7 +112,6 @@ async function trashThread(threadId) {
 }
 
 module.exports = {
-  AUTH_FILE,
   SCOPE,
   TOKEN_URL,
   findLabelId,

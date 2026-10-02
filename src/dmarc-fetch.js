@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const gmail = require('./lib/gmail');
 const { timestampSlug } = require('./lib/format');
+const { readConfig } = require('./lib/config');
 const { buildOutput } = require('./parse-dmarc');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -20,14 +21,7 @@ const TMP = path.join(ROOT, '.claude', 'tmp', 'dmarc');
 const REPORTS = path.join(ROOT, 'reports');
 
 function loadLabel() {
-  try {
-    const config = JSON.parse(
-      fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8')
-    );
-    return config.gmail?.labels?.dmarc || 'dmarc';
-  } catch {
-    return 'dmarc';
-  }
+  return readConfig().gmail?.labels?.dmarc || 'dmarc';
 }
 
 function narrativeFor(out) {

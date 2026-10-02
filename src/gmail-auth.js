@@ -5,25 +5,21 @@
  *
  * Prerequisite: a Google Cloud project with the Gmail API enabled and an OAuth
  * client of type "Desktop app". On first run it asks for the client id/secret
- * (or reads them from an existing gmail-auth.json), opens the consent page and
- * saves the refresh token to gmail-auth.json (gitignored).
+ * (or reads them from config.json's existing "gmail.auth"), opens the consent
+ * page and saves the refresh token to config.json (gitignored).
  *
  * Tip: publish the consent screen "In production" (no verification needed for
  * personal use). In "Testing" mode the refresh token expires after 7 days.
  */
 
-const fs = require('node:fs');
 const http = require('node:http');
 const readline = require('node:readline/promises');
 const { execFile } = require('node:child_process');
-const { AUTH_FILE, SCOPE, TOKEN_URL } = require('./lib/gmail');
+const { SCOPE, TOKEN_URL } = require('./lib/gmail');
+const { readConfig, updateConfig } = require('./lib/config');
 
 function existing() {
-  try {
-    return JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
-  } catch {
-    return {};
-  }
+  return readConfig().gmail?.auth || {};
 }
 
 function openBrowser(url) {
@@ -99,8 +95,9 @@ async function main() {
     );
   }
   auth.refreshToken = json.refresh_token;
-  fs.writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2));
-  console.log(`Saved ${AUTH_FILE}`);
+  const config = readConfig();
+  updateConfig({ gmail: { ...config.gmail, auth } });
+  console.log('Saved gmail.auth to config.json');
 }
 
 main().catch(err => {

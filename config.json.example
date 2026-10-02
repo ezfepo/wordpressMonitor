@@ -4,7 +4,15 @@
     "labels": {
       "dmarc": "dmarc",
       "wordpress": "wordpress"
+    },
+    "auth": {
+      "clientId": "",
+      "clientSecret": "",
+      "refreshToken": ""
     }
+  },
+  "hostinger": {
+    "apiToken": ""
   },
   "dmarc": {
     "knownSources": [

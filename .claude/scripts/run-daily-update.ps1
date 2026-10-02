@@ -4,23 +4,20 @@
 # Without -Mode it shows a menu (Update: 1 WordPress, 2 DMARC, 3 both;
 # Check only: 4 WordPress, 5 DMARC).
 #
-# Each mode runs one or more Claude Code skills headlessly (claude -p):
-#   wp     -> /wp-update-plugins (updates) + node src/php-check.js (PHP bump via
-#             Hostinger API, no Claude) + node src/vuln-check.js (known
-#             vulnerabilities via WPVulnerability.net, no Claude, read-only) +
-#             node src/wp-mails-fetch.js (WordPress emails, no Claude)
-#   dmarc  -> node src/dmarc-fetch.js (DMARC reports from Gmail API, no Claude)
-#   all    -> both, in separate sessions
-#   dryrun -> /wp-update-plugins check-only + node src/php-check.js --dry-run +
-#             node src/vuln-check.js (nothing is changed or trashed)
+# Every mode runs plain Node scripts; Claude Code is not needed:
+#   wp     -> node src/update-plugins.js (updates) + src/php-check.js (PHP bump
+#             and cache clear via Hostinger API) + src/vuln-check.js (known
+#             vulnerabilities via WPVulnerability.net, read-only) +
+#             src/wp-mails-fetch.js (WordPress emails)
+#   dmarc  -> node src/dmarc-fetch.js (DMARC reports from Gmail API)
+#   all    -> both
+#   dryrun -> same as wp, with --dry-run on the update, PHP and email steps
+#             (nothing is changed or trashed)
 #   dmarcdry -> node src/dmarc-fetch.js --dry-run (parses reports, trashes nothing)
 # Afterwards src/build-report.js merges the run's JSON results into
 # reports/<ts>-report.html, which is opened automatically. Files older than
 # retentionDays (config.json) are then deleted from .claude/tmp,
 # .claude/logs and reports.
-#
-# Uses --output-format stream-json so progress prints live line by line; the
-# raw JSON stream is kept in the log for troubleshooting.
 #
 # Logs each run to .claude\logs\ (gitignored) for troubleshooting.
 
@@ -31,7 +28,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# claude's stdout is UTF-8; without this, non-ASCII characters (em dashes,
+# node's stdout is UTF-8; without this, non-ASCII characters (em dashes,
 # etc.) get mis-decoded into mojibake (e.g. "—" shows as "ГÇö"). Setting
 # $OutputEncoding controls how PowerShell decodes piped external-process
 # output, which is what matters here. [Console]::OutputEncoding is for
@@ -93,121 +90,6 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $runStart = Get-Date
 $runStamp = $runStart.ToString('yyyy-MM-dd-HHmmss')
 
-# Friendly labels for the tools this workflow actually uses, so progress
-# reads like a task list instead of raw tool/API names. Repeated per-thread
-# Gmail calls collapse to one line each (via $SuppressAfterFirst) so the log
-# reads as one step, not a burst of near-identical lines.
-$ToolLabels = @{
-  Bash                                 = 'Running scripts'
-  Read                                 = 'Reading results'
-  Write                                = 'Saving results'
-  ToolSearch                           = 'Preparing tools'
-  Glob                                 = 'Reading results'
-  Grep                                 = 'Reading results'
-  Edit                                 = 'Saving results'
-  mcp__claude_ai_Gmail__search_threads = 'Reading Gmail'
-  mcp__claude_ai_Gmail__get_thread     = 'Reading Gmail'
-  mcp__claude_ai_Gmail__get_message    = 'Reading Gmail'
-  mcp__claude_ai_Gmail__trash_thread   = 'Sending processed emails to trash'
-}
-
-# Labels in here print only the first time they're seen per skill run;
-# repeats (one call per site/thread) are silently absorbed.
-$SuppressAfterFirst = @(
-  'Preparing tools',
-  'Reading results',
-  'Reading Gmail',
-  'Sending processed emails to trash',
-  'Saving results'
-)
-$SeenLabels = New-Object 'System.Collections.Generic.HashSet[string]'
-
-function Get-ToolLabel {
-  param([string]$Name)
-  if ($ToolLabels.ContainsKey($Name)) { return $ToolLabels[$Name] }
-  return $Name
-}
-
-function Write-StreamEvent {
-  param([string]$Line)
-
-  if ([string]::IsNullOrWhiteSpace($Line)) { return }
-
-  try {
-    $streamEvent = $Line | ConvertFrom-Json -ErrorAction Stop
-  } catch {
-    Write-Output $Line
-    return
-  }
-
-  switch ($streamEvent.type) {
-    'system' {
-      if ($streamEvent.subtype -eq 'init') {
-        Write-Output "==> Started: $script:CurrentTitle"
-      }
-    }
-    'assistant' {
-      foreach ($block in $streamEvent.message.content) {
-        if ($block.type -eq 'text' -and $block.text) {
-          Write-Output $block.text
-        } elseif ($block.type -eq 'tool_use') {
-          $label = Get-ToolLabel $block.name
-          if ($SuppressAfterFirst -contains $label) {
-            if ($SeenLabels.Add($label)) {
-              Write-Output "  - $label..."
-            }
-          } else {
-            Write-Output "  - $label..."
-          }
-        }
-      }
-    }
-    'result' {
-      if ($streamEvent.subtype -eq 'success') {
-        Write-Output "==> Done: $script:CurrentTitle"
-      } else {
-        Write-Output "==> Failed: $script:CurrentTitle ($($streamEvent.subtype))"
-      }
-    }
-    'tool_progress' {
-      if ($streamEvent.heartbeat) {
-        Write-Output "    (still working, $($streamEvent.elapsed_time_seconds)s so far)"
-      }
-    }
-    default {
-      # 'user' (tool results), 'rate_limit_event' and anything else are raw
-      # API bookkeeping, not useful to show live — they're still captured in
-      # the .jsonl log for troubleshooting.
-    }
-  }
-}
-
-function Invoke-ClaudeSkill {
-  param([string]$Prompt, [string]$LogName, [string]$Title)
-
-  $logFile = Join-Path $logDir "$runStamp-$LogName.log"
-  $rawLog = "$logFile.jsonl"
-  $script:CurrentTitle = $Title
-  $script:SeenLabels.Clear()
-  $script:LogFiles += $logFile
-
-  & claude -p $Prompt `
-    --permission-mode bypassPermissions `
-    --output-format stream-json `
-    --verbose `
-    2>&1 |
-    ForEach-Object {
-      Add-Content -Path $rawLog -Value $_ -Encoding utf8
-      $friendly = Write-StreamEvent -Line $_
-      foreach ($line in $friendly) {
-        Write-Output $line
-        Add-Content -Path $logFile -Value $line -Encoding utf8
-      }
-    }
-  # Not `return`ed: the function's output stream carries the progress lines.
-  $script:SkillExit = $LASTEXITCODE
-}
-
 function Invoke-NodeScript {
   param([string[]]$NodeArgs, [string]$LogName, [string]$Title)
 
@@ -245,7 +127,7 @@ $LogFiles = @()
 $exitCode = 0
 try {
   if ($Mode -in 'wp', 'all') {
-    Invoke-ClaudeSkill -Prompt '/wp-update-plugins' -LogName 'wp-update' -Title 'Update WordPress sites'
+    Invoke-NodeScript -NodeArgs @('src/update-plugins.js') -LogName 'wp-update' -Title 'Update WordPress sites'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
     Invoke-NodeScript -NodeArgs @('src/php-check.js') -LogName 'php-check' -Title 'Check PHP versions'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
@@ -255,7 +137,7 @@ try {
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
   }
   if ($Mode -eq 'dryrun') {
-    Invoke-ClaudeSkill -Prompt '/wp-update-plugins check-only' -LogName 'wp-check' -Title 'Check WordPress sites'
+    Invoke-NodeScript -NodeArgs @('src/update-plugins.js', '--dry-run') -LogName 'wp-check' -Title 'Check WordPress sites'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)
     Invoke-NodeScript -NodeArgs @('src/php-check.js', '--dry-run') -LogName 'php-check' -Title 'Check PHP versions'
     $exitCode = [Math]::Max($exitCode, $script:SkillExit)

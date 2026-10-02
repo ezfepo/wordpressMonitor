@@ -21,11 +21,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { timestampSlug } = require('./lib/format');
 const { satisfiesOperator } = require('./lib/version');
+const { runWithConcurrency } = require('./lib/concurrency');
 
 const ROOT = path.resolve(__dirname, '..');
 const REPORTS = path.join(ROOT, 'reports');
 const API_BASE = 'https://www.wpvulnerability.net';
 const REQUEST_TIMEOUT_MS = 15000;
+const LOOKUP_CONCURRENCY = 8;
 
 function readJson(file) {
   try {
@@ -162,12 +164,17 @@ async function main() {
   }
 
   const installed = collectInstalled(wpUpdate);
-  const results = [];
+  const jobs = [];
   for (const kind of ['plugin', 'theme']) {
     for (const [slug, installs] of installed[kind]) {
-      results.push(await checkSlug(kind, slug, installs));
+      jobs.push({ kind, slug, installs });
     }
   }
+  const results = await runWithConcurrency(
+    jobs,
+    LOOKUP_CONCURRENCY,
+    ({ kind, slug, installs }) => checkSlug(kind, slug, installs)
+  );
 
   const flagged = results.flatMap(r => r.flagged);
   const skipped = results.filter(r => r.skipped).length;

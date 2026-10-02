@@ -161,12 +161,15 @@ async function main() {
 
   const sites = loadSites();
   const wpUpdate = loadLatestWpUpdate();
-  const results = [];
-  for (const site of sites) {
-    const result = await checkSite(site, wpUpdate, dryRun);
-    result.cacheClear = await clearCacheIfChanged(site, wpUpdate, dryRun);
-    results.push(result);
-  }
+  // All sites at once: a handful of calls is far below Hostinger's
+  // 90 requests/minute limit, and Promise.all keeps the sites.json order.
+  const results = await Promise.all(
+    sites.map(async site => {
+      const result = await checkSite(site, wpUpdate, dryRun);
+      result.cacheClear = await clearCacheIfChanged(site, wpUpdate, dryRun);
+      return result;
+    })
+  );
 
   fs.writeFileSync(outFile, JSON.stringify({ sites: results }, null, 2));
 

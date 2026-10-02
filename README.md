@@ -88,18 +88,19 @@ exits with code `1` if any site ended up in a non-OK state.
 
 ### Running on demand (menu + HTML report)
 
-`.claude/scripts/run-daily-update.ps1` runs the WordPress skill headlessly (Claude Code) and the DMARC step as a plain Node script.
+`.claude/scripts/run-daily-update.ps1` runs every step as a plain Node script, so Claude Code
+is not needed to run it (it can also be started from Task Scheduler).
 Without arguments it shows a menu (or pass `-Mode wp|dmarc|all|dryrun|dmarcdry`):
 
 **Update**
 
-1. **Update WordPress sites** — `/wp-update-plugins`: updates plugins, themes
-   and translations, then `node src/php-check.js` checks/bumps PHP via the
+1. **Update WordPress sites** — `node src/update-plugins.js`: updates plugins,
+   themes and translations, then `node src/php-check.js` checks/bumps PHP via the
    Hostinger API, then `node src/vuln-check.js` checks every installed
    plugin/theme against WPVulnerability.net's known-vulnerability database,
    then `node src/wp-mails-fetch.js` processes the WordPress notification
    emails (Gmail `wordpress` label, classified by rules, moved to the trash
-   afterwards). None of these steps need Claude except the update itself.
+   afterwards).
 2. **Process DMARC reports** — `node src/dmarc-fetch.js`: parses the reports under the Gmail
    `dmarc` label, adds highlights and moves the processed emails to the trash.
 3. **Do everything** — both.
@@ -115,8 +116,8 @@ Without arguments it shows a menu (or pass `-Mode wp|dmarc|all|dryrun|dmarcdry`)
 When it finishes it builds `reports/<timestamp>-report.html` (via
 `src/build-report.js`) and opens it, then deletes files older than
 `retentionDays`. Logs go to `.claude/logs/` (gitignored). No Gmail drafts are
-created. You can also invoke `/wp-update-plugins` or `/dmarc-check` (the interactive DMARC variant) directly in a
-Claude Code session. `wordpressMonitor Update.bat.example` is a sample
+created. Inside a Claude Code session you can also invoke `/wp-update-plugins` or
+`/dmarc-check` (the interactive DMARC variant) directly; the runner doesn't use them. `wordpressMonitor Update.bat.example` is a sample
 double-click shortcut for the runner.
 
 **Optional:** `src/php-check.js` needs `hostinger.apiToken` set in `config.json`

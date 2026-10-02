@@ -15,3 +15,6 @@ sites.json
 # retention, Gmail OAuth tokens, Hostinger API token) — personal, never commit
 # See config.json.example
 config.json
+
+# Local MCP server config — personal, never commit
+.mcp.json

@@ -45,11 +45,12 @@ the corresponding commands (e.g. how to run a single test).
   credentials in one file: name, sshHost, sshPort, sshUser, wpPath, siteUrl (optional,
   used by the post-update health check), excludePlugins, excludeThemes, plus either
   `sshPassword` or `sshKeyPath` (+ optional `sshKeyPassphrase`) per site. Never committed.
-- `.claude/skills/wp-update-plugins/` — on-demand entry point (`/wp-update-plugins`): runs
-  the script only (plugins/themes/translations/core-check). It creates no Gmail drafts.
-  PHP version checking/bumping and WordPress notification emails are **not** handled by
-  the skill — the runner calls `node src/php-check.js [--dry-run]` and then
-  `node src/wp-mails-fetch.js [--dry-run]` after it, no Claude involved in either.
+- `.claude/skills/wp-update-plugins/` — interactive-only entry point (`/wp-update-plugins`)
+  for use inside a Claude Code session: runs the script only
+  (plugins/themes/translations/core-check). The runner (`run-daily-update.ps1`) no longer
+  calls it — it runs `node src/update-plugins.js [--dry-run]` directly, then
+  `src/php-check.js`, `src/vuln-check.js` and `src/wp-mails-fetch.js`, so a run needs no
+  Claude Code install, login or cost, and can be started from Task Scheduler.
 - `src/php-check.js` + `src/lib/hostinger.js` — PHP version check/bump via the Hostinger
   API (plain `fetch`, no Claude/MCP). Credentials: `hostinger.apiToken` in `config.json`
   (generate one at hPanel → API). For each site (`username` = `sshUser`,
@@ -111,11 +112,10 @@ the corresponding commands (e.g. how to run a single test).
 There is no scheduled automation. `.claude/scripts/run-daily-update.ps1` (triggered from a
 desktop `.bat`, see `wordpressMonitor Update.bat.example`) shows a menu, or takes
 `-Mode wp|dmarc|all|dryrun|dmarcdry`. Menu: **Update** — 1 Update WordPress sites
-(`/wp-update-plugins`, then `node src/php-check.js`, `node src/vuln-check.js` and
-`node src/wp-mails-fetch.js`, none needing Claude), 2 Process DMARC reports
-(`node src/dmarc-fetch.js`, no Claude), 3 Do everything (both; the WordPress part is its
-own `claude -p` session); **Check only** (changes nothing) — 4 Check WordPress sites
-(`dryrun`, `/wp-update-plugins check-only` + `php-check.js --dry-run` + `vuln-check.js` +
+(`node src/update-plugins.js`, then `node src/php-check.js`, `node src/vuln-check.js` and
+`node src/wp-mails-fetch.js`), 2 Process DMARC reports (`node src/dmarc-fetch.js`),
+3 Do everything (both); **Check only** (changes nothing) — 4 Check WordPress sites
+(`dryrun`: `update-plugins.js --dry-run` + `php-check.js --dry-run` + `vuln-check.js` +
 `wp-mails-fetch.js --dry-run`: nothing updated, no PHP bump, no emails trashed),
 5 Check DMARC reports (`dmarcdry`, `dmarc-fetch.js --dry-run`: parses and reports but
 trashes nothing, so it can be repeated). When done,

@@ -31,6 +31,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Client } = require('ssh2');
 const { formatTimestamp, timestampSlug } = require('./lib/format');
+const { runWithConcurrency } = require('./lib/concurrency');
 
 const ROOT = path.resolve(__dirname, '..');
 const SITES_FILE = path.join(ROOT, 'sites.json');
@@ -400,25 +401,6 @@ async function checkSiteHealth(url) {
   } catch (err) {
     return { ok: false, httpStatus: null, error: err.message };
   }
-}
-
-// Runs fn(item, index) over items with at most `limit` in flight at once,
-// preserving input order in the returned results. All sites currently share
-// one server/user, so this caps concurrency instead of running everything at
-// once.
-async function runWithConcurrency(items, limit, fn) {
-  const results = new Array(items.length);
-  let next = 0;
-  async function worker() {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i], i);
-    }
-  }
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, worker)
-  );
-  return results;
 }
 
 function emptySection() {

@@ -32,6 +32,9 @@ const SITES_FILE = path.join(ROOT, 'sites.json');
 const REPORTS_DIR = path.join(ROOT, 'reports');
 const SSH_READY_TIMEOUT_MS = 20000;
 const COMMAND_TIMEOUT_MS = 300000;
+// All sites currently share one Hostinger server/user; cap how many run at
+// once to avoid overloading shared hosting.
+const SITE_CONCURRENCY = 3;
 
 function parseArgs(argv) {
   const args = { dryRun: false, site: null };
@@ -352,6 +355,25 @@ async function checkPhpCompatibility(conn, site) {
     outdated,
     incompatibleItems
   };
+}
+
+// Runs fn(item, index) over items with at most `limit` in flight at once,
+// preserving input order in the returned results. All sites currently share
+// one server/user, so this caps concurrency instead of running everything at
+// once.
+async function runWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker)
+  );
+  return results;
 }
 
 function emptySection() {
@@ -677,15 +699,18 @@ async function main() {
     `wordpressMonitor: ${options.dryRun ? 'checking' : 'updating'} plugins, themes and translations on ${sites.length} site(s)...`
   );
 
-  const results = [];
-  for (const site of sites) {
-    console.log(`- ${site.name} (${site.sshHost})...`);
-    const result = await processSite(site, options, step =>
-      console.log(`    [${site.name}] ${step}...`)
-    );
-    results.push(result);
-    console.log(`  ${result.status}`);
-  }
+  const results = await runWithConcurrency(
+    sites,
+    SITE_CONCURRENCY,
+    async site => {
+      console.log(`- ${site.name} (${site.sshHost})...`);
+      const result = await processSite(site, options, step =>
+        console.log(`    [${site.name}] ${step}...`)
+      );
+      console.log(`  [${site.name}] ${result.status}`);
+      return result;
+    }
+  );
 
   fs.mkdirSync(REPORTS_DIR, { recursive: true });
   const slug = timestampSlug(timestamp);

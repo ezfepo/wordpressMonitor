@@ -32,7 +32,9 @@ the corresponding commands (e.g. how to run a single test).
   If either check finds something, the site status becomes `attention-needed` and the
   report/email flags it as an alert requiring manual action (core update, or a PHP version
   bump in Hostinger hPanel). One site or category failing never aborts the others; exit
-  code 1 signals at least one non-ok site.
+  code 1 signals at least one non-ok site. Sites are processed concurrently (`main()`'s
+  `runWithConcurrency`, cap `SITE_CONCURRENCY = 3`) since they all currently share one
+  Hostinger server/user — raise this constant only if sites move to separate servers.
 - `sites.json` (gitignored, template in `sites.json.example`) — site inventory and
   credentials in one file: name, sshHost, sshPort, sshUser, wpPath, excludePlugins,
   excludeThemes, plus either `sshPassword` or `sshKeyPath` (+ optional

@@ -169,9 +169,14 @@ function truncateOutput(result) {
   return (result.stderr || result.stdout).trim().slice(0, 500);
 }
 
-// kind: 'plugin' | 'theme'
-async function listItemsWithUpdates(conn, site, kind) {
-  const cmd = wpCommand(site, `${kind} list --update=available --format=json`);
+// kind: 'plugin' | 'theme'. One `wp list` call serves both the update check
+// and the PHP-compatibility check (checkPhpCompatibility), instead of each
+// listing separately with its own --fields/--update filter.
+async function listItems(conn, site, kind) {
+  const cmd = wpCommand(
+    site,
+    `${kind} list --fields=name,status,version,update,update_version,requires_php --format=json`
+  );
   const result = await execCommand(conn, cmd);
   if (result.code !== 0) {
     throw new Error(
@@ -291,11 +296,7 @@ function compareVersions(a, b) {
   return 0;
 }
 
-// Flags an outdated PHP version (like Hostinger's hPanel "better compatible
-// version found" notice) and any installed plugin/theme that declares a
-// "Requires PHP" higher than what's actually running. Never changes the PHP
-// version itself — that's a hosting-level change outside WP-CLI's reach.
-async function checkPhpCompatibility(conn, site) {
+async function getPhpVersion(conn, site) {
   // Avoid `wp cli info`: it shells out internally (e.g. for git info) via
   // proc_open/proc_close, which shared hosts like Hostinger disable for PHP.
   // `wp eval` just reads the PHP_VERSION constant, no subprocess needed.
@@ -314,24 +315,21 @@ async function checkPhpCompatibility(conn, site) {
       `Unexpected PHP_VERSION output: ${phpVersion.slice(0, 200)}`
     );
   }
+  return phpVersion;
+}
 
+// Flags an outdated PHP version (like Hostinger's hPanel "better compatible
+// version found" notice) and any installed plugin/theme that declares a
+// "Requires PHP" higher than what's actually running. Never changes the PHP
+// version itself — that's a hosting-level change outside WP-CLI's reach.
+// `items` is { plugin: [...], theme: [...] } from listItems(), already
+// fetched by processItemSection — no extra `wp list` calls here.
+function checkPhpCompatibility(phpVersion, items) {
   const outdated = compareVersions(phpVersion, RECOMMENDED_PHP_VERSION) < 0;
 
   const incompatibleItems = [];
-  for (const [kind, fields] of [
-    ['plugin', 'name,status,requires_php'],
-    ['theme', 'name,status,requires_php']
-  ]) {
-    const result = await execCommand(
-      conn,
-      wpCommand(site, `${kind} list --fields=${fields} --format=json`)
-    );
-    if (result.code !== 0) {
-      throw new Error(
-        `wp ${kind} list failed (exit ${result.code}): ${truncateOutput(result)}`
-      );
-    }
-    for (const row of parseWpJson(result.stdout, `${kind} list`)) {
+  for (const kind of ['plugin', 'theme']) {
+    for (const row of items[kind]) {
       if (
         row.requires_php &&
         compareVersions(phpVersion, row.requires_php) < 0
@@ -380,9 +378,16 @@ function emptySection() {
   return { available: [], updated: [], failed: [], excluded: [] };
 }
 
-async function processItemSection(conn, site, kind, excludeList, options) {
+async function processItemSection(
+  conn,
+  site,
+  kind,
+  excludeList,
+  options,
+  items
+) {
   const section = emptySection();
-  const available = await listItemsWithUpdates(conn, site, kind);
+  const available = items.filter(item => item.update === 'available');
   section.available = available.map(item => ({
     name: item.name,
     version: item.version,
@@ -490,28 +495,35 @@ async function processSite(site, options, onProgress = () => {}) {
   }
   result.connected = true;
 
-  // One category failing must not skip the others.
+  // One category failing must not skip the others. `wp plugin/theme list` is
+  // fetched once per kind and reused for both the update check and the PHP
+  // compatibility check below, instead of listing twice.
+  const items = { plugin: [], theme: [] };
   try {
     try {
       onProgress('plugins');
+      items.plugin = await listItems(conn, site, 'plugin');
       result.plugins = await processItemSection(
         conn,
         site,
         'plugin',
         site.excludePlugins || [],
-        options
+        options,
+        items.plugin
       );
     } catch (err) {
       result.errors.push(`plugins: ${err.message}`);
     }
     try {
       onProgress('themes');
+      items.theme = await listItems(conn, site, 'theme');
       result.themes = await processItemSection(
         conn,
         site,
         'theme',
         site.excludeThemes || [],
-        options
+        options,
+        items.theme
       );
     } catch (err) {
       result.errors.push(`themes: ${err.message}`);
@@ -534,7 +546,8 @@ async function processSite(site, options, onProgress = () => {}) {
     }
     try {
       onProgress('php');
-      result.phpCompatibility = await checkPhpCompatibility(conn, site);
+      const phpVersion = await getPhpVersion(conn, site);
+      result.phpCompatibility = checkPhpCompatibility(phpVersion, items);
     } catch (err) {
       result.errors.push(`php: ${err.message}`);
     }

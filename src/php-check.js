@@ -11,7 +11,10 @@
  *
  * Reuses this run's <ts>-wp-update.json (the newest one) for each site's
  * phpCompatibility.incompatibleItems, so a flagged plugin/theme blocks the
- * auto-bump exactly like the old Claude-driven skill step did.
+ * auto-bump exactly like the old Claude-driven skill step did. The same
+ * file's plugins/themes/translations "updated" lists decide which sites get
+ * their Hostinger cache cleared (real runs only): clearing failing is
+ * informational, not an alert — it doesn't mean the update itself failed.
  *
  * Standing approval: bumping PHP to the highest supported version is
  * auto-applied with no per-run confirmation, including headless/scheduled
@@ -65,6 +68,31 @@ function incompatibilityReason(wpUpdate, siteName) {
   return items
     .map(i => `${i.kind} "${i.name}" requires PHP ${i.requiresPhp}`)
     .join('; ');
+}
+
+function hasAppliedChanges(wpUpdate, siteName) {
+  const result = wpUpdate?.results?.find(r => r.site === siteName);
+  if (!result) return false;
+  return (
+    result.plugins?.updated?.length > 0 ||
+    result.themes?.updated?.length > 0 ||
+    result.translations?.updated?.length > 0
+  );
+}
+
+async function clearCacheIfChanged(site, wpUpdate, dryRun) {
+  if (dryRun || !hasAppliedChanges(wpUpdate, site.name)) {
+    return 'skipped-no-changes';
+  }
+  if (!site.username || !site.domain) {
+    return 'skipped-no-changes';
+  }
+  try {
+    await hostinger.clearCache(site.username, site.domain);
+    return 'cleared';
+  } catch {
+    return 'failed';
+  }
 }
 
 async function checkSite(site, wpUpdate, dryRun) {
@@ -135,7 +163,9 @@ async function main() {
   const wpUpdate = loadLatestWpUpdate();
   const results = [];
   for (const site of sites) {
-    results.push(await checkSite(site, wpUpdate, dryRun));
+    const result = await checkSite(site, wpUpdate, dryRun);
+    result.cacheClear = await clearCacheIfChanged(site, wpUpdate, dryRun);
+    results.push(result);
   }
 
   fs.writeFileSync(outFile, JSON.stringify({ sites: results }, null, 2));
@@ -144,8 +174,9 @@ async function main() {
   const alerts = results.filter(r =>
     ['skipped-compat', 'failed'].includes(r.outcome)
   ).length;
+  const cleared = results.filter(r => r.cacheClear === 'cleared').length;
   console.log(
-    `PHP check: ${results.length} site(s), ${bumped} bumped, ${alerts} needing attention${dryRun ? ' (dry run)' : ''}.`
+    `PHP check: ${results.length} site(s), ${bumped} bumped, ${alerts} needing attention, ${cleared} cache(s) cleared${dryRun ? ' (dry run)' : ''}.`
   );
   if (results.some(r => r.outcome === 'failed')) process.exitCode = 1;
 }

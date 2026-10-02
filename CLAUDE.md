@@ -65,9 +65,14 @@ the corresponding commands (e.g. how to run a single test).
   including headless/scheduled ones (outcome `bumped`, reported as routine info, not an
   alert). On `--dry-run`, outcome is `available-dry-run` instead (nothing applied). A
   failed update call is outcome `failed` (alert). Already on the highest version is
-  `up-to-date`. Writes `reports/<ts>-php.json` as
-  `{"sites":[{"site","current","highest","outcome","newVersion","reason","error"}]}`, or
-  `{"unavailable": true}` if `hostinger.apiToken` isn't set in `config.json` —
+  `up-to-date`. The same script also clears each site's Hostinger cache (DELETE
+  `.../cache/clear`) on real runs where that site's newest `<ts>-wp-update.json` entry has
+  a non-empty plugins/themes/translations `updated` list — recorded as `cacheClear`:
+  `cleared` / `failed` / `skipped-no-changes` (dry run, or nothing applied). A failed
+  cache clear is informational only (`build-report.js` shows it as muted text, never an
+  alert) — it doesn't mean the update failed. Writes `reports/<ts>-php.json` as
+  `{"sites":[{"site","current","highest","outcome","newVersion","reason","error","cacheClear"}]}`,
+  or `{"unavailable": true}` if `hostinger.apiToken` isn't set in `config.json` —
   `build-report.js` reads this file as-is and needs no changes. This is the one part of
   the workflow that changes live hosting config unattended; everything else (plugins,
   themes, translations, core updates) stays either

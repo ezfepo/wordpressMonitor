@@ -201,6 +201,13 @@ function siteCard(r, phpSite) {
       }[phpSite.outcome];
       const bad = ['skipped-compat', 'failed'].includes(phpSite.outcome);
       if (text) out.push(`<p class="${bad ? 'bad' : ''}">${text}</p>`);
+      if (phpSite.cacheClear === 'cleared') {
+        out.push('<p class="muted">Cache cleared after update.</p>');
+      } else if (phpSite.cacheClear === 'failed') {
+        out.push(
+          '<p class="muted">Cache clear failed (informational only).</p>'
+        );
+      }
     }
     out.push(itemList('Plugins', r.plugins, r.dryRun));
     out.push(itemList('Themes', r.themes, r.dryRun));

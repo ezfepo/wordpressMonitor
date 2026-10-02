@@ -132,6 +132,11 @@ as routine info in the report, not as something needing action. If a
 plugin/theme was flagged (or the update call itself fails), it's skipped and
 reported as an alert instead so it can be reviewed manually first.
 
+The same step also clears a site's Hostinger cache on real runs if that run
+actually applied a plugin, theme or translation update there. A failed cache
+clear is shown as informational text, not an alert — it doesn't mean the
+update itself failed.
+
 ## How it works
 
 `src/lib/config.js` reads and writes `config.json`, the one gitignored file
@@ -172,7 +177,9 @@ updates applied.
 `src/php-check.js` reads `src/lib/hostinger.js` (plain `fetch`, no
 dependencies) to call the Hostinger API directly — no Claude, no MCP
 connector. It reuses the newest `<ts>-wp-update.json`'s `phpCompatibility`
-data instead of re-checking compatibility itself.
+data instead of re-checking compatibility itself, and that same file's
+plugins/themes/translations `updated` lists to decide which sites get a
+cache clear.
 
 `src/dmarc-fetch.js` reads the DMARC label through the Gmail API (`src/lib/gmail.js`), runs the parser, writes a rule-based narrative and trashes the parsed threads (not with `--dry-run`). It needs a one-time setup: create a Google Cloud project with the Gmail API enabled and an OAuth client of type **Desktop app** (publish the consent screen "In production", otherwise the refresh token expires after 7 days), then run `npm run gmail:auth`, which saves the resulting OAuth credentials to `gmail.auth` in `config.json`.
 

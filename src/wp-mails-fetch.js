@@ -195,6 +195,28 @@ function classify({ subject, from, text }) {
   }
 
   if (
+    /wordfence/i.test(subject) &&
+    /acceso de administraci[oó]n|administrator (login|access)/i.test(subject)
+  ) {
+    const user = text.match(
+      /usuario con nombre de usuario "([^"]+)"|user with username "([^"]+)"/i
+    );
+    const username = user?.[1] || user?.[2] || '?';
+    const ip = text.match(/IP del usuario:\s*(\S+)|User'?s IP:\s*(\S+)/i);
+    const location = text.match(
+      /Ubicaci[oó]n del usuario:\s*(.+)|User'?s location:\s*(.+)/i
+    );
+    const summary = `Wordfence: admin login by "${username}" from ${(ip?.[1] || ip?.[2] || 'an unknown IP').trim()}${location ? ` (${oneLine(location[1] || location[2])})` : ''}`;
+    return result(
+      'wordfence-admin-login',
+      'security',
+      'review',
+      summary,
+      'An admin-level user logged in. Confirm it was you or an expected admin; if not, change passwords and check the user list.'
+    );
+  }
+
+  if (
     /fatal error|technical difficulties|recovery mode|error cr[ií]tico/i.test(
       all
     )

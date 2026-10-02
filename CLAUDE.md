@@ -35,10 +35,16 @@ the corresponding commands (e.g. how to run a single test).
   code 1 signals at least one non-ok site. Sites are processed concurrently (`main()`'s
   `runWithConcurrency`, cap `SITE_CONCURRENCY = 3`) since they all currently share one
   Hostinger server/user — raise this constant only if sites move to separate servers.
+  After a real (non-dry-run) run that actually applied a plugin, theme or translation
+  update on a site, `checkSiteHealth()` fetches that site's homepage once (`siteUrl` in
+  `sites.json`, or derived from the domain folder in `wpPath` when not set) and flags it
+  as `attention-needed` if the response is 4xx/5xx, the connection fails, or the body
+  contains WordPress's critical-error marker text. Skipped on dry runs and on sites with
+  zero updates applied, to avoid extra load on every run.
 - `sites.json` (gitignored, template in `sites.json.example`) — site inventory and
-  credentials in one file: name, sshHost, sshPort, sshUser, wpPath, excludePlugins,
-  excludeThemes, plus either `sshPassword` or `sshKeyPath` (+ optional
-  `sshKeyPassphrase`) per site. Never committed.
+  credentials in one file: name, sshHost, sshPort, sshUser, wpPath, siteUrl (optional,
+  used by the post-update health check), excludePlugins, excludeThemes, plus either
+  `sshPassword` or `sshKeyPath` (+ optional `sshKeyPassphrase`) per site. Never committed.
 - `.claude/skills/wp-update-plugins/` — on-demand entry point (`/wp-update-plugins`): runs
   the script only (plugins/themes/translations/core-check). It creates no Gmail drafts.
   PHP version checking/bumping and WordPress notification emails are **not** handled by

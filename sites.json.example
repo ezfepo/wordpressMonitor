@@ -6,6 +6,7 @@
       "sshPort": 65002,
       "sshUser": "u000000000",
       "wpPath": "domains/example.com/public_html",
+      "siteUrl": "https://example.com",
       "sshPassword": "",
       "excludePlugins": [],
       "excludeThemes": []

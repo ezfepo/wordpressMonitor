@@ -33,7 +33,10 @@ over SSH and has WP-CLI available.
    (the path to the WordPress install on the remote host, relative to the
    SSH user's home directory), plus either `sshPassword` or `sshKeyPath`
    (+ optional `sshKeyPassphrase`) for SSH auth. Optional `excludePlugins` /
-   `excludeThemes` arrays skip specific slugs during updates.
+   `excludeThemes` arrays skip specific slugs during updates. Optional
+   `siteUrl` (e.g. `https://example.com`) is the URL the post-update health
+   check fetches; without it, the check derives `https://<domain>` from the
+   domain folder in `wpPath`.
 
    `sites.json` is never committed — it's gitignored, since it holds both
    site info and credentials.
@@ -157,6 +160,14 @@ It also checks (but never applies) two things that need manual review:
 Either check finding something marks the site `attention-needed` in the
 report, and the HTML report leads with an "Action needed" section summarizing
 what to review.
+
+After a real (non-dry-run) run that actually applied a plugin, theme or
+translation update on a site, it fetches that site's homepage once (`siteUrl`
+in `sites.json`, or `https://<domain>` derived from the domain folder in
+`wpPath` when not set) and flags the site `attention-needed` if the response
+is 4xx/5xx, the connection fails, or the body contains WordPress's
+critical-error marker text. Skipped on dry runs and on sites with zero
+updates applied.
 
 `src/php-check.js` reads `src/lib/hostinger.js` (plain `fetch`, no
 dependencies) to call the Hostinger API directly — no Claude, no MCP

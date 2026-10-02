@@ -20,6 +20,11 @@
  * either sshPassword or sshKeyPath (+ optional sshKeyPassphrase).
  * sites.json is gitignored, so this never leaves the machine it's configured
  * on.
+ *
+ * After a real run that actually changed something, each site's homepage is
+ * fetched once (siteUrl in sites.json, or derived from wpPath) to catch an
+ * update that broke the site outright (5xx, connection failure, or
+ * WordPress's critical-error page).
  */
 
 const fs = require('node:fs');
@@ -355,6 +360,48 @@ function checkPhpCompatibility(phpVersion, items) {
   };
 }
 
+// Explicit siteUrl wins; otherwise derive it from the domain folder inside
+// wpPath (domains/<domain>/public_html -> https://<domain>), the same
+// derivation php-check.js and wp-mails-fetch.js already use. Returns null if
+// neither is available.
+function siteUrl(site) {
+  if (site.siteUrl) {
+    return site.siteUrl;
+  }
+  const domain = (site.wpPath || '').match(/domains\/([^/]+)/)?.[1];
+  return domain ? `https://${domain}` : null;
+}
+
+const HEALTH_CHECK_TIMEOUT_MS = 15000;
+const CRITICAL_ERROR_MARKER = 'There has been a critical error on this website';
+
+// Fetches the site's homepage after a real update and flags anything that
+// looks broken: a non-2xx/3xx status, a connection failure, or WordPress's
+// own critical-error page (which can still return 200). Never throws —
+// returns { ok, httpStatus, error } so one broken site doesn't abort others.
+async function checkSiteHealth(url) {
+  try {
+    const res = await fetch(url, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS)
+    });
+    const body = await res.text();
+    if (res.status >= 400) {
+      return { ok: false, httpStatus: res.status, error: null };
+    }
+    if (body.includes(CRITICAL_ERROR_MARKER)) {
+      return {
+        ok: false,
+        httpStatus: res.status,
+        error: 'WordPress critical-error page'
+      };
+    }
+    return { ok: true, httpStatus: res.status, error: null };
+  } catch (err) {
+    return { ok: false, httpStatus: null, error: err.message };
+  }
+}
+
 // Runs fn(item, index) over items with at most `limit` in flight at once,
 // preserving input order in the returned results. All sites currently share
 // one server/user, so this caps concurrency instead of running everything at
@@ -457,6 +504,9 @@ function computeStatus(result) {
   if (result.coreUpdate || result.phpCompatibility) {
     return 'attention-needed';
   }
+  if (result.healthCheck && !result.healthCheck.ok) {
+    return 'attention-needed';
+  }
   return 'ok';
 }
 
@@ -472,6 +522,7 @@ async function processSite(site, options, onProgress = () => {}) {
     translations: { available: [], updated: [], remaining: [] },
     coreUpdate: null,
     phpCompatibility: null,
+    healthCheck: null,
     errors: []
   };
 
@@ -554,6 +605,21 @@ async function processSite(site, options, onProgress = () => {}) {
   } finally {
     conn.end();
   }
+
+  // Only worth checking when a real run actually changed something on this
+  // site — skip on dry runs and on sites with zero updates applied.
+  const anyApplied =
+    result.plugins.updated.length > 0 ||
+    result.themes.updated.length > 0 ||
+    result.translations.updated.length > 0;
+  if (!options.dryRun && anyApplied) {
+    const url = siteUrl(site);
+    if (url) {
+      onProgress('health check');
+      result.healthCheck = await checkSiteHealth(url);
+    }
+  }
+
   result.status = computeStatus(result);
   return result;
 }
@@ -657,6 +723,13 @@ function buildMarkdownReport(results, options, timestamp) {
       } else {
         lines.push('- PHP compatibility: OK.');
       }
+      if (r.healthCheck) {
+        lines.push(
+          r.healthCheck.ok
+            ? `- Health check: OK (HTTP ${r.healthCheck.httpStatus}).`
+            : `- **ALERT: health check failed after update${r.healthCheck.httpStatus ? ` (HTTP ${r.healthCheck.httpStatus})` : ''}${r.healthCheck.error ? `: ${r.healthCheck.error}` : ''} — check the site.**`
+        );
+      }
       markdownItemSection(lines, 'Plugins', r.plugins, options);
       markdownItemSection(lines, 'Themes', r.themes, options);
       markdownTranslationSection(lines, r.translations, options);
@@ -693,6 +766,11 @@ function printSummary(results) {
           `    ALERT: ${item.kind} "${item.name}" requires PHP ${item.requiresPhp} (site runs ${r.phpCompatibility.phpVersion})`
         );
       }
+    }
+    if (r.healthCheck && !r.healthCheck.ok) {
+      console.log(
+        `    ALERT: health check failed after update${r.healthCheck.httpStatus ? ` (HTTP ${r.healthCheck.httpStatus})` : ''}${r.healthCheck.error ? `: ${r.healthCheck.error}` : ''}`
+      );
     }
   }
 }

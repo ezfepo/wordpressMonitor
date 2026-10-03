@@ -48,7 +48,13 @@ the corresponding commands (e.g. how to run a single test).
   `sites.json`, or derived from the domain folder in `wpPath` when not set) and flags it
   as `attention-needed` if the response is 4xx/5xx, the connection fails, or the body
   contains WordPress's critical-error marker text. Skipped on dry runs and on sites with
-  zero updates applied, to avoid extra load on every run.
+  zero updates applied, to avoid extra load on every run. Separately, **every** run
+  (dry runs included) `checkSecurityHeaders()` makes two GETs per site: the homepage must
+  send CSP, HSTS, nosniff and X-Frame-Options, and `wp-login.php` must NOT send a CSP
+  (the block editor breaks under it). A failure sets the site to `attention-needed`, shows
+  in the report and in "Action needed", and says to re-run `apply-headers.js` for that
+  site. It catches a plugin, hPanel or a rewritten `.htaccess` dropping the headers
+  `apply-headers.js` set.
 - `sites.json` (gitignored, template in `sites.json.example`) — site inventory and
   credentials in one file: name, sshHost, sshPort, sshUser, wpPath, siteUrl (optional,
   used by the post-update health check), excludePlugins, excludeThemes, plus either
@@ -98,7 +104,8 @@ the corresponding commands (e.g. how to run a single test).
   wordpressMonitor security headers"). The CSP is built from optional `sites.json` fields:
   `cspFrameSrc` (extra frame origins: embeds, reCAPTCHA, payment frames) and
   `cspScriptSrcExtra` (e.g. `'unsafe-eval'` for a plugin that can't run without it —
-  temporary; EZFEPO has it for Ninja Forms until its contact form is replaced). CSP is
+  keep it temporary; no site uses it now: EZFEPO's Ninja Forms form was replaced by
+  WPForms and the exception removed on 2026-10-03). CSP is
   **not sent for `/wp-admin/` and `/wp-login.php`**: the block editor needs `blob:`
   frames/workers, `unsafe-eval` and Jetpack/WordPress.com frames, so a policy strict
   enough to matter breaks it; the other headers go everywhere. Hostinger runs LiteSpeed,
@@ -124,11 +131,13 @@ the corresponding commands (e.g. how to run a single test).
   `version_compare()`-style `lt/le/eq/ne/gt/ge`, via `satisfiesOperator()` in
   `src/lib/version.js`); a slug the API doesn't recognize (HTTP 404 — a plugin not
   hosted on WordPress.org, e.g. a premium plugin or an internal `_`-prefixed
-  mu-plugin-style name) is skipped quietly, not treated as an error. Writes
-  `reports/<ts>-vuln.json` as
-  `{"checked","flagged":[{"site","kind","slug","installedVersion","name","unfixed","fixedIn","sources"}],"skipped","errors"}`,
-  or `{"unavailable": true}` if no `wp-update.json` exists yet. `build-report.js` renders a
-  "Known vulnerabilities" section and feeds every flagged install into "Action needed"
+  mu-plugin-style name) is not treated as an error, but it is named, not just counted,
+  in the log and the report (e.g. `_patchstack` on 4 sites), since nothing is known about
+  its vulnerabilities. Writes `reports/<ts>-vuln.json` as
+  `{"checked","flagged":[{"site","kind","slug","installedVersion","name","unfixed","fixedIn","sources"}],"skipped":[{"kind","slug","sites"}],"errors"}`
+  (`checked` = unique slugs, not installs), or `{"unavailable": true}` if no
+  `wp-update.json` exists yet. `build-report.js` renders a
+  "Known vulnerabilities" section (with a "Not checked" line) and feeds every flagged install into "Action needed"
   (these are real, outstanding vulnerabilities — always an alert, unlike the PHP cache-
   clear step above).
 

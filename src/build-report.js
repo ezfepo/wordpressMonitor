@@ -89,6 +89,24 @@ function collectActions(wp, php, mails, dmarc, vuln) {
           );
         }
       }
+      if (r.healthCheck && !r.healthCheck.ok) {
+        actions.push(
+          `${r.site}: health check failed after the update${r.healthCheck.httpStatus ? ` (HTTP ${r.healthCheck.httpStatus})` : ''}${r.healthCheck.error ? `: ${r.healthCheck.error}` : ''} - check the site.`
+        );
+      }
+      const sh = r.securityHeaders;
+      if (sh && !sh.ok) {
+        const parts = [];
+        if (sh.error) parts.push(`could not check (${sh.error})`);
+        if (sh.missing.length > 0) {
+          parts.push(`homepage is missing ${sh.missing.join(', ')}`);
+        }
+        if (sh.adminCsp)
+          parts.push('wp-login.php sends a CSP (breaks the block editor)');
+        actions.push(
+          `${r.site}: security headers - ${parts.join('; ')}. Re-run: node src/apply-headers.js --site ${r.site}`
+        );
+      }
       if (r.status === 'partial' || r.status === 'failed') {
         if (r.errors.length === 0) {
           actions.push(`${r.site}: some updates did not apply.`);
@@ -215,6 +233,18 @@ function siteCard(r, phpSite) {
           '<p class="muted">Cache clear failed (informational only).</p>'
         );
       }
+    }
+    if (r.healthCheck && !r.healthCheck.ok) {
+      out.push(
+        `<p class="bad">Health check failed after update${r.healthCheck.httpStatus ? ` (HTTP ${esc(r.healthCheck.httpStatus)})` : ''}${r.healthCheck.error ? `: ${esc(r.healthCheck.error)}` : ''}.</p>`
+      );
+    }
+    if (r.securityHeaders) {
+      out.push(
+        r.securityHeaders.ok
+          ? '<p class="muted">Security headers: OK.</p>'
+          : `<p class="bad">Security headers: ${r.securityHeaders.error ? `could not check (${esc(r.securityHeaders.error)}). ` : ''}${r.securityHeaders.missing.length > 0 ? `homepage is missing ${esc(r.securityHeaders.missing.join(', '))}. ` : ''}${r.securityHeaders.adminCsp ? 'wp-login.php sends a CSP.' : ''}</p>`
+      );
     }
     out.push(itemList('Plugins', r.plugins, r.dryRun));
     out.push(itemList('Themes', r.themes, r.dryRun));
@@ -395,8 +425,16 @@ function vulnSection(vuln) {
     return `<section><h2>Known vulnerabilities</h2><p class="muted">${esc(vuln.data.reason || 'Vulnerability check unavailable.')}</p></section>`;
   }
   const flagged = vuln.data.flagged || [];
+  // Items WPVulnerability.net can't look up (not on WordPress.org): named so
+  // it's clear what was NOT checked. Older files stored just a count.
+  const skippedItems = Array.isArray(vuln.data.skipped)
+    ? vuln.data.skipped
+    : [];
+  const notChecked = skippedItems.length
+    ? `<p class="muted">Not checked (not on WordPress.org, so no vulnerability data): ${skippedItems.map(s => `${esc(s.slug)} (${esc(s.sites.join(', '))})`).join('; ')}.</p>`
+    : '';
   if (flagged.length === 0) {
-    return `<section><h2>Known vulnerabilities</h2><p class="muted">${esc(vuln.data.checked ?? 0)} plugin/theme install(s) checked against WPVulnerability.net; none flagged.</p></section>`;
+    return `<section><h2>Known vulnerabilities</h2><p class="muted">${esc(vuln.data.checked ?? 0)} unique plugin/theme slug(s) checked against WPVulnerability.net; none flagged.</p>${notChecked}</section>`;
   }
   const rows = flagged
     .map(
@@ -407,7 +445,7 @@ function vulnSection(vuln) {
   const errors = (vuln.data.errors || []).length
     ? `<p class="muted">${vuln.data.errors.length} lookup error(s): ${esc(vuln.data.errors.join('; '))}</p>`
     : '';
-  return `<section><h2>Known vulnerabilities</h2><p class="muted">${esc(vuln.data.checked ?? 0)} plugin/theme install(s) checked against <a href="https://www.wpvulnerability.net/">WPVulnerability.net</a>, ${flagged.length} flagged.</p><table><thead><tr><th>Site</th><th>Kind</th><th>Slug</th><th>Installed</th><th>Fix</th><th>Sources</th></tr></thead><tbody>${rows}</tbody></table>${errors}</section>`;
+  return `<section><h2>Known vulnerabilities</h2><p class="muted">${esc(vuln.data.checked ?? 0)} unique plugin/theme slug(s) checked against <a href="https://www.wpvulnerability.net/">WPVulnerability.net</a>, ${flagged.length} flagged install(s).</p><table><thead><tr><th>Site</th><th>Kind</th><th>Slug</th><th>Installed</th><th>Fix</th><th>Sources</th></tr></thead><tbody>${rows}</tbody></table>${notChecked}${errors}</section>`;
 }
 
 // ---- Page -----------------------------------------------------------------

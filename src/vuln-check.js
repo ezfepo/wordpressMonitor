@@ -115,7 +115,14 @@ async function checkSlug(kind, slug, installs) {
     vulnerabilities = await fetchVulnerabilities(kind, slug);
   } catch (err) {
     if (err instanceof InvalidSlugError) {
-      return { kind, slug, error: null, skipped: true, flagged: [] };
+      return {
+        kind,
+        slug,
+        error: null,
+        skipped: true,
+        sites: installs.map(i => i.site),
+        flagged: []
+      };
     }
     return { kind, slug, error: err.message, flagged: [] };
   }
@@ -177,7 +184,11 @@ async function main() {
   );
 
   const flagged = results.flatMap(r => r.flagged);
-  const skipped = results.filter(r => r.skipped).length;
+  // Not on WordPress.org (premium/custom plugins, internal "_" names): can't
+  // be checked here, so name them instead of just counting them.
+  const skipped = results
+    .filter(r => r.skipped)
+    .map(r => ({ kind: r.kind, slug: r.slug, sites: r.sites }));
   const errors = results
     .filter(r => r.error)
     .map(r => `${r.kind}/${r.slug}: ${r.error}`);
@@ -192,8 +203,11 @@ async function main() {
   );
 
   console.log(
-    `Vuln check: ${results.length} slug(s) checked, ${flagged.length} vulnerable install(s) found, ${skipped} not on WordPress.org${errors.length ? `, ${errors.length} lookup error(s)` : ''}.`
+    `Vuln check: ${results.length} slug(s) checked, ${flagged.length} vulnerable install(s) found, ${skipped.length} not on WordPress.org${errors.length ? `, ${errors.length} lookup error(s)` : ''}.`
   );
+  for (const s of skipped) {
+    console.log(`  not checked: ${s.kind} ${s.slug} (${s.sites.join(', ')})`);
+  }
   if (errors.length) process.exitCode = 1;
 }
 

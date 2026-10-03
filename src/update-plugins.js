@@ -446,6 +446,51 @@ async function checkSiteHealth(url) {
   }
 }
 
+// Headers apply-headers.js sets on every page. If a plugin, hPanel or a
+// rewritten .htaccess drops one, the site silently loses that protection.
+const REQUIRED_SECURITY_HEADERS = [
+  'content-security-policy',
+  'strict-transport-security',
+  'x-content-type-options',
+  'x-frame-options'
+];
+
+async function fetchHeaders(url) {
+  const res = await fetch(url, {
+    redirect: 'follow',
+    signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS)
+  });
+  await res.body?.cancel();
+  return res;
+}
+
+// Runs on every check (two GETs per site, not tied to an update): the
+// homepage must send every required header, and wp-login.php must NOT send a
+// Content-Security-Policy (the block editor breaks under it, see
+// apply-headers.js). Never throws: returns { ok, missing, adminCsp, error }.
+async function checkSecurityHeaders(url) {
+  try {
+    const base = url.replace(/\/$/, '');
+    const [home, login] = await Promise.all([
+      fetchHeaders(`${base}/`),
+      fetchHeaders(`${base}/wp-login.php`)
+    ]);
+    const missing = REQUIRED_SECURITY_HEADERS.filter(h => !home.headers.get(h));
+    // Only meaningful when the login page actually answered.
+    const adminCsp =
+      login.status < 400 &&
+      Boolean(login.headers.get('content-security-policy'));
+    return {
+      ok: missing.length === 0 && !adminCsp,
+      missing,
+      adminCsp,
+      error: null
+    };
+  } catch (err) {
+    return { ok: false, missing: [], adminCsp: false, error: err.message };
+  }
+}
+
 function emptySection() {
   return {
     installed: [],
@@ -544,6 +589,9 @@ function computeStatus(result) {
   if (result.healthCheck && !result.healthCheck.ok) {
     return 'attention-needed';
   }
+  if (result.securityHeaders && !result.securityHeaders.ok) {
+    return 'attention-needed';
+  }
   return 'ok';
 }
 
@@ -560,6 +608,7 @@ async function processSite(site, options, onProgress = () => {}) {
     coreUpdate: null,
     phpCompatibility: null,
     healthCheck: null,
+    securityHeaders: null,
     errors: []
   };
 
@@ -668,8 +717,25 @@ async function processSite(site, options, onProgress = () => {}) {
     }
   }
 
+  const url = siteUrl(site);
+  if (url) {
+    onProgress('security headers');
+    result.securityHeaders = await checkSecurityHeaders(url);
+  }
+
   result.status = computeStatus(result);
   return result;
+}
+
+function describeSecurityHeaders(h) {
+  const parts = [];
+  if (h.error) parts.push(`could not check (${h.error})`);
+  if (h.missing.length > 0)
+    parts.push(`homepage is missing ${h.missing.join(', ')}`);
+  if (h.adminCsp) {
+    parts.push('wp-login.php sends a CSP (the block editor breaks under it)');
+  }
+  return `${parts.join('; ')} — re-run: node src/apply-headers.js --site <name>`;
 }
 
 function markdownItemSection(lines, label, section, options) {
@@ -778,6 +844,13 @@ function buildMarkdownReport(results, options, timestamp) {
             : `- **ALERT: health check failed after update${r.healthCheck.httpStatus ? ` (HTTP ${r.healthCheck.httpStatus})` : ''}${r.healthCheck.error ? `: ${r.healthCheck.error}` : ''} — check the site.**`
         );
       }
+      if (r.securityHeaders) {
+        lines.push(
+          r.securityHeaders.ok
+            ? '- Security headers: OK.'
+            : `- **ALERT: security headers — ${describeSecurityHeaders(r.securityHeaders)}.**`
+        );
+      }
       markdownItemSection(lines, 'Plugins', r.plugins, options);
       markdownItemSection(lines, 'Themes', r.themes, options);
       markdownTranslationSection(lines, r.translations, options);
@@ -814,6 +887,11 @@ function printSummary(results) {
           `    ALERT: ${item.kind} "${item.name}" requires PHP ${item.requiresPhp} (site runs ${r.phpCompatibility.phpVersion})`
         );
       }
+    }
+    if (r.securityHeaders && !r.securityHeaders.ok) {
+      console.log(
+        `    ALERT: security headers — ${describeSecurityHeaders(r.securityHeaders)}`
+      );
     }
     if (r.healthCheck && !r.healthCheck.ok) {
       console.log(

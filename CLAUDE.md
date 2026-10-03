@@ -28,13 +28,21 @@ the corresponding commands (e.g. how to run a single test).
   with a re-check afterwards so unapplied translations are reported as remaining). It also
   checks (but never applies) WordPress core updates via `wp core check-update`, and PHP
   compatibility (current PHP version vs. WordPress's recommended minimum, plus any
-  plugin/theme's `requires_php` exceeding it) via `wp cli info` + `wp plugin/theme list`.
+  plugin/theme's `requires_php` exceeding it). All of a site's read-only WP-CLI calls
+  (plugin/theme lists, the three language lists, core check, `PHP_VERSION`) run in ONE
+  `wp eval` via `WP_CLI::runcommand(..., launch=false)` (`readSiteState()`), so WordPress
+  boots once per site instead of once per call (~30% faster); each call keeps its own
+  exit code, so one failing read still only fails its own category. Updates still use
+  separate `wp ... update` calls, and translations are re-read separately after a real
+  plugin/theme update (new versions can bring new language packs).
   If either check finds something, the site status becomes `attention-needed` and the
   report/email flags it as an alert requiring manual action (core update, or a PHP version
   bump in Hostinger hPanel). One site or category failing never aborts the others; exit
   code 1 signals at least one non-ok site. Sites are processed concurrently (`main()`'s
-  `runWithConcurrency`, cap `SITE_CONCURRENCY = 3`) since they all currently share one
-  Hostinger server/user — raise this constant only if sites move to separate servers.
+  `runWithConcurrency`, cap `SITE_CONCURRENCY = 5`). All sites share one Hostinger
+  server/user; 5 at once measured 16 s vs 24 s at 3 for a dry run with no SSH errors. If
+  an SSH error or timeout ever shows up, drop it back to 3 (a real update run does more
+  work per site than the dry runs measured).
   After a real (non-dry-run) run that actually applied a plugin, theme or translation
   update on a site, `checkSiteHealth()` fetches that site's homepage once (`siteUrl` in
   `sites.json`, or derived from the domain folder in `wpPath` when not set) and flags it

@@ -258,6 +258,11 @@ const CATEGORY_GUIDE = {
     criteria:
       'Act unless you triggered it (admin email change = possible takeover).'
   },
+  'wordfence-admin-login': {
+    title: 'Wordfence: admin logins',
+    criteria:
+      'Review: an administrator signed in. Fine if the user and IP are yours (the summary shows both); if not, change admin passwords and check the user list.'
+  },
   'sucuri-code': {
     title: 'Sucuri: plugin/theme changes',
     criteria:

@@ -40,7 +40,7 @@ const SSH_READY_TIMEOUT_MS = 20000;
 const COMMAND_TIMEOUT_MS = 300000;
 // All sites currently share one Hostinger server/user; cap how many run at
 // once to avoid overloading shared hosting.
-const SITE_CONCURRENCY = 3;
+const SITE_CONCURRENCY = 5;
 
 function parseArgs(argv) {
   const args = { dryRun: false, site: null };
@@ -175,21 +175,71 @@ function truncateOutput(result) {
   return (result.stderr || result.stdout).trim().slice(0, 500);
 }
 
-// kind: 'plugin' | 'theme'. One `wp list` call serves both the update check
-// and the PHP-compatibility check (checkPhpCompatibility), instead of each
-// listing separately with its own --fields/--update filter.
-async function listItems(conn, site, kind) {
-  const cmd = wpCommand(
-    site,
-    `${kind} list --fields=name,status,version,update,update_version,requires_php --format=json`
-  );
-  const result = await execCommand(conn, cmd);
-  if (result.code !== 0) {
+const ITEM_FIELDS = 'name,status,version,update,update_version,requires_php';
+
+// Every read-only WP-CLI call for a site, run through WP_CLI::runcommand()
+// inside ONE `wp eval`, so WordPress boots once instead of once per call
+// (measured 14.3 s -> 9.7 s per site). launch=false runs them in-process,
+// which also avoids the proc_open() Hostinger disables. Each entry keeps its
+// own exit code and stderr so one failing read doesn't hide the others.
+const READ_COMMANDS = {
+  plugin: `plugin list --fields=${ITEM_FIELDS} --format=json`,
+  theme: `theme list --fields=${ITEM_FIELDS} --format=json`,
+  langCore: 'language core list --update=available --format=json',
+  langPlugin: 'language plugin list --all --update=available --format=json',
+  langTheme: 'language theme list --all --update=available --format=json',
+  core: 'core check-update --format=json'
+};
+const STATE_MARKER = '@@WPMONITOR@@';
+const READ_SCRIPT = `
+$cmds = json_decode(${JSON.stringify(JSON.stringify(READ_COMMANDS))}, true);
+$out = ['php' => PHP_VERSION];
+foreach ($cmds as $k => $c) {
+  $r = WP_CLI::runcommand($c, ['return' => 'all', 'launch' => false, 'exit_error' => false]);
+  $out[$k] = ['code' => $r->return_code, 'stdout' => $r->stdout, 'stderr' => $r->stderr];
+}
+echo '${STATE_MARKER}' . json_encode($out) . '${STATE_MARKER}';
+`;
+
+// Returns { php, <key>: { code, stdout, stderr } ... } or, if the combined
+// call itself failed, { failed: message } so every category reports it.
+async function readSiteState(conn, site) {
+  let result;
+  try {
+    result = await execCommand(
+      conn,
+      wpCommand(site, `eval ${shellQuote(READ_SCRIPT)}`)
+    );
+  } catch (err) {
+    return { failed: `wp eval (read state) failed: ${err.message}` };
+  }
+  const start = result.stdout.indexOf(STATE_MARKER);
+  const end = result.stdout.lastIndexOf(STATE_MARKER);
+  if (result.code !== 0 || start === -1 || end <= start) {
+    return {
+      failed: `wp eval (read state) failed (exit ${result.code}): ${truncateOutput(result)}`
+    };
+  }
+  try {
+    return JSON.parse(result.stdout.slice(start + STATE_MARKER.length, end));
+  } catch {
+    return { failed: 'wp eval (read state) returned unreadable output' };
+  }
+}
+
+// Parsed JSON array for one read command, or the same error the separate
+// call used to throw.
+function readPart(state, key, label) {
+  if (state.failed) {
+    throw new Error(state.failed);
+  }
+  const part = state[key];
+  if (part.code !== 0) {
     throw new Error(
-      `wp ${kind} list failed (exit ${result.code}): ${truncateOutput(result)}`
+      `wp ${label} failed (exit ${part.code}): ${(part.stderr || part.stdout).trim().slice(0, 500)}`
     );
   }
-  return parseWpJson(result.stdout, `${kind} list`);
+  return parseWpJson(part.stdout, label);
 }
 
 async function updateItems(conn, site, kind, names) {
@@ -207,40 +257,46 @@ async function updateItems(conn, site, kind, names) {
   }
 }
 
-// Detect available translation (language pack) updates for core, plugins and
-// themes. Returns [{ type, name, language }].
+// Translation (language pack) sources for core, plugins and themes: the
+// READ_COMMANDS key, the `wp` command and how to name a row.
+const TRANSLATION_SOURCES = [
+  { type: 'core', key: 'langCore', nameOf: () => 'core' },
+  { type: 'plugin', key: 'langPlugin', nameOf: row => row.plugin },
+  { type: 'theme', key: 'langTheme', nameOf: row => row.theme }
+];
+
+function toTranslation(source, row) {
+  return {
+    type: source.type,
+    name: source.nameOf(row),
+    language: row.language
+  };
+}
+
+// Available translation updates from the combined read (see readSiteState).
+// Returns [{ type, name, language }].
+function translationsFromState(state) {
+  return TRANSLATION_SOURCES.flatMap(source =>
+    readPart(state, source.key, READ_COMMANDS[source.key].split(' --')[0]).map(
+      row => toTranslation(source, row)
+    )
+  );
+}
+
+// Same list, read with separate calls. Used to re-check after updating
+// translations (and plugins/themes, which can bring new language packs).
 async function listTranslationUpdates(conn, site) {
-  const sources = [
-    {
-      type: 'core',
-      cmd: 'language core list --update=available --format=json',
-      nameOf: () => 'core'
-    },
-    {
-      type: 'plugin',
-      cmd: 'language plugin list --all --update=available --format=json',
-      nameOf: row => row.plugin
-    },
-    {
-      type: 'theme',
-      cmd: 'language theme list --all --update=available --format=json',
-      nameOf: row => row.theme
-    }
-  ];
   const found = [];
-  for (const source of sources) {
-    const result = await execCommand(conn, wpCommand(site, source.cmd));
+  for (const source of TRANSLATION_SOURCES) {
+    const cmd = READ_COMMANDS[source.key];
+    const result = await execCommand(conn, wpCommand(site, cmd));
     if (result.code !== 0) {
       throw new Error(
-        `wp ${source.cmd.split(' --')[0]} failed (exit ${result.code}): ${truncateOutput(result)}`
+        `wp ${cmd.split(' --')[0]} failed (exit ${result.code}): ${truncateOutput(result)}`
       );
     }
     for (const row of parseWpJson(result.stdout, `language ${source.type}`)) {
-      found.push({
-        type: source.type,
-        name: source.nameOf(row),
-        language: row.language
-      });
+      found.push(toTranslation(source, row));
     }
   }
   return found;
@@ -265,15 +321,8 @@ async function updateTranslations(conn, site) {
 // WordPress core updates are surfaced as an alert but never applied
 // automatically — they can involve breaking changes and deserve a manual
 // look. Returns null when core is up to date.
-async function checkCoreUpdate(conn, site) {
-  const cmd = wpCommand(site, 'core check-update --format=json');
-  const result = await execCommand(conn, cmd);
-  if (result.code !== 0) {
-    throw new Error(
-      `wp core check-update failed (exit ${result.code}): ${truncateOutput(result)}`
-    );
-  }
-  const updates = parseWpJson(result.stdout, 'core check-update');
+function checkCoreUpdate(state) {
+  const updates = readPart(state, 'core', 'core check-update');
   if (updates.length === 0) {
     return null;
   }
@@ -302,20 +351,14 @@ function compareVersions(a, b) {
   return 0;
 }
 
-async function getPhpVersion(conn, site) {
-  // Avoid `wp cli info`: it shells out internally (e.g. for git info) via
-  // proc_open/proc_close, which shared hosts like Hostinger disable for PHP.
-  // `wp eval` just reads the PHP_VERSION constant, no subprocess needed.
-  const versionResult = await execCommand(
-    conn,
-    wpCommand(site, `eval ${shellQuote('echo PHP_VERSION;')}`)
-  );
-  if (versionResult.code !== 0) {
-    throw new Error(
-      `wp eval (PHP_VERSION) failed (exit ${versionResult.code}): ${truncateOutput(versionResult)}`
-    );
+// PHP_VERSION comes from the combined read (READ_SCRIPT). Avoid `wp cli
+// info` for this: it shells out via proc_open/proc_close, which shared hosts
+// like Hostinger disable for PHP.
+function getPhpVersion(state) {
+  if (state.failed) {
+    throw new Error(state.failed);
   }
-  const phpVersion = versionResult.stdout.trim();
+  const phpVersion = String(state.php || '').trim();
   if (!/^\d+(\.\d+)*$/.test(phpVersion)) {
     throw new Error(
       `Unexpected PHP_VERSION output: ${phpVersion.slice(0, 200)}`
@@ -460,9 +503,9 @@ async function processItemSection(
   return section;
 }
 
-async function processTranslationSection(conn, site, options) {
+async function processTranslationSection(conn, site, options, available) {
   const section = { available: [], updated: [], remaining: [] };
-  section.available = await listTranslationUpdates(conn, site);
+  section.available = available;
 
   if (options.dryRun || section.available.length === 0) {
     return section;
@@ -540,14 +583,16 @@ async function processSite(site, options, onProgress = () => {}) {
   }
   result.connected = true;
 
-  // One category failing must not skip the others. `wp plugin/theme list` is
-  // fetched once per kind and reused for both the update check and the PHP
-  // compatibility check below, instead of listing twice.
+  // One category failing must not skip the others. Every read-only WP-CLI
+  // call runs in one WordPress load (see readSiteState); the plugin/theme
+  // lists feed both the update check and the PHP compatibility check.
   const items = { plugin: [], theme: [] };
   try {
+    onProgress('reading');
+    const state = await readSiteState(conn, site);
     try {
       onProgress('plugins');
-      items.plugin = await listItems(conn, site, 'plugin');
+      items.plugin = readPart(state, 'plugin', 'plugin list');
       result.plugins = await processItemSection(
         conn,
         site,
@@ -561,7 +606,7 @@ async function processSite(site, options, onProgress = () => {}) {
     }
     try {
       onProgress('themes');
-      items.theme = await listItems(conn, site, 'theme');
+      items.theme = readPart(state, 'theme', 'theme list');
       result.themes = await processItemSection(
         conn,
         site,
@@ -575,23 +620,32 @@ async function processSite(site, options, onProgress = () => {}) {
     }
     try {
       onProgress('translations');
+      // Updating a plugin or theme can bring new language packs, so after a
+      // real update re-read the list instead of using the earlier snapshot.
+      const updatedItems =
+        result.plugins.updated.length > 0 || result.themes.updated.length > 0;
+      const available =
+        !options.dryRun && updatedItems
+          ? await listTranslationUpdates(conn, site)
+          : translationsFromState(state);
       result.translations = await processTranslationSection(
         conn,
         site,
-        options
+        options,
+        available
       );
     } catch (err) {
       result.errors.push(`translations: ${err.message}`);
     }
     try {
       onProgress('core');
-      result.coreUpdate = await checkCoreUpdate(conn, site);
+      result.coreUpdate = checkCoreUpdate(state);
     } catch (err) {
       result.errors.push(`core: ${err.message}`);
     }
     try {
       onProgress('php');
-      const phpVersion = await getPhpVersion(conn, site);
+      const phpVersion = getPhpVersion(state);
       result.phpCompatibility = checkPhpCompatibility(phpVersion, items);
     } catch (err) {
       result.errors.push(`php: ${err.message}`);

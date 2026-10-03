@@ -92,6 +92,23 @@ the corresponding commands (e.g. how to run a single test).
   label `gmail.labels.wordpress`), which classifies Sucuri / Wordfence / Limit Login
   Attempts / core notices by rules (`kind`, `actionNeeded`, `site` from `sites.json`),
   writes `<ts>-wp-mails.json` and trashes the threads read (not with `--dry-run`).
+- `src/apply-headers.js [--site <name>] [--dry-run]` — writes each site's security headers
+  (HSTS, nosniff, X-Frame-Options, Referrer-Policy, Permissions-Policy and one enforced
+  Content-Security-Policy) into its `.htaccess`, between marker comments ("BEGIN/END
+  wordpressMonitor security headers"). The CSP is built from optional `sites.json` fields:
+  `cspFrameSrc` (extra frame origins: embeds, reCAPTCHA, payment frames) and
+  `cspScriptSrcExtra` (e.g. `'unsafe-eval'` for a plugin that can't run without it —
+  temporary; EZFEPO has it for Ninja Forms until its contact form is replaced). CSP is
+  **not sent for `/wp-admin/` and `/wp-login.php`**: the block editor needs `blob:`
+  frames/workers, `unsafe-eval` and Jetpack/WordPress.com frames, so a policy strict
+  enough to matter breaks it; the other headers go everywhere. Hostinger runs LiteSpeed,
+  which ignores `SetEnvIf`/`RewriteRule ... env=!VAR` conditions (tested) but honors
+  `<If>` + `Header unset`, which is what the block uses. The old `.htaccess` is copied to
+  `.htaccess.bak-<ts>` first and restored automatically if the homepage errors or loses
+  its CSP; afterwards it checks that the homepage has CSP and that `wp-login.php` and a
+  `/wp-admin/` file don't. `--dry-run` changes nothing and shows whether the generated
+  policy matches what each site sends today. New third-party embed or form plugin? Add
+  its origin to `cspFrameSrc` (test with a browser console open) and re-run.
 - `src/vuln-check.js` + `src/lib/version.js` — known-vulnerability check via the
   [WPVulnerability.net API](https://docs.wpvulnerability.com/) (plain `fetch`, no Claude,
   no API key: `/plugin/{slug}/` and `/theme/{slug}/` are public). Read-only — no

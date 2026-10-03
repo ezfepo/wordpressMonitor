@@ -7,6 +7,8 @@
       "sshUser": "u000000000",
       "wpPath": "domains/example.com/public_html",
       "siteUrl": "https://example.com",
+      "cspFrameSrc": ["https://www.youtube.com"],
+      "cspScriptSrcExtra": [],
       "sshPassword": "",
       "excludePlugins": [],
       "excludeThemes": []

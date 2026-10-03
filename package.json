@@ -18,6 +18,7 @@
     "wp:mails": "node src/wp-mails-fetch.js",
     "php:check": "node src/php-check.js",
     "vuln:check": "node src/vuln-check.js",
+    "headers:apply": "node src/apply-headers.js",
     "dmarc:parse": "node src/parse-dmarc.js",
     "report": "node src/build-report.js"
   },

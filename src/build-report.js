@@ -311,7 +311,12 @@ const CATEGORY_GUIDE = {
   'sucuri-content': {
     title: 'Sucuri: content changes',
     criteria:
-      'Discard: routine post/page changes, often a scheduled task. Review only if nobody edited content and the IP is unfamiliar.'
+      'Discard: scheduled plugin posts (Limit Login Attempts daily digest) or changes from the local server. Review: any other post/page/media change from a remote IP; fine if you or an editor made it, otherwise check for defacement or injected links.'
+  },
+  'wordfence-activity': {
+    title: 'Wordfence weekly activity',
+    criteria:
+      'Discard: blocked attacks and routine file changes (logs, translations, caches, backups). Review: .htaccess, plugins, themes or mu-plugins changed, non-media files in uploads, WooCommerce fatal-error logs, or 10+ failed logins on an existing username. Act: PHP/JS files in uploads, or changes to core or root PHP files. Plugin updates and apply-headers.js explain their own changes; anything else could be a compromise.'
   },
   'trustedsite-summary': {
     title: 'TrustedSite summaries',

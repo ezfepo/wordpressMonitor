@@ -69,6 +69,9 @@ const clip = (s, n = 160) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 // Sucuri events about site content (routine) vs. code/user changes (worth a look).
 const SUCURI_CONTENT = /^(post|page|media|comment|widget|menu)\b/i;
 const SUCURI_CODE = /^(plugin|theme)\b/i;
+// Posts that plugins create/update on a schedule, from whatever IP triggered
+// WP-Cron (a visitor or bot): the Limit Login Attempts daily digest post.
+const SUCURI_ROUTINE_MESSAGE = /\bLlar_digest_day\b/i;
 const LOCAL_IP = /^(127\.0\.0\.1|::1)$/;
 
 // Every mail gets a category (its group in the report), a verdict
@@ -83,6 +86,128 @@ function result(category, kind, verdict, summary, advice) {
     advice,
     actionNeeded: verdict === 'act'
   };
+}
+
+// Files Wordfence lists as "recently modified" that are normal on these sites.
+const SAFE_MODIFIED =
+  /^(llms\.txt|\.htaccess\.bak-.*|wp-content\/(languages\/|cache\/|upgrade\/|uploads\/(wc-logs|sucuri|cache)\/|mu-plugins\/hostinger-))/i;
+// Data files plugins keep in uploads (form themes, generated CSS, caches).
+const UPLOAD_DATA = /\.(json|css|ser|txt|log|xml|csv|po|mo)$/i;
+const CODE_FILE = /\.(php|phtml|phar|js)$/i;
+const MEDIA_FILE = /\.(jpe?g|png|gif|webp|avif|svg|ico|mp4|mov|webm|mp3|pdf)$/i;
+
+// How suspicious a modified file is: 'act' (code in uploads, core or root PHP
+// files), 'review' (.htaccess, plugins, themes, mu-plugins, non-media uploads)
+// or null (expected: logs, translations, caches, backups).
+function modifiedLevel(file) {
+  if (SAFE_MODIFIED.test(file)) return null;
+  if (/^wp-content\/uploads\//i.test(file)) {
+    if (CODE_FILE.test(file)) return 'act';
+    if (/\/cache\//i.test(file)) return null;
+    return MEDIA_FILE.test(file) || UPLOAD_DATA.test(file) ? null : 'review';
+  }
+  if (/^(wp-admin|wp-includes)\//i.test(file)) return 'act';
+  if (/^[^/]+\.php$/i.test(file)) return 'act';
+  if (/^\.htaccess$/i.test(file)) return 'review';
+  if (/^wp-content\/(plugins|themes|mu-plugins)\//i.test(file)) {
+    return 'review';
+  }
+  return CODE_FILE.test(file) ? 'review' : null;
+}
+
+// Weekly "Wordfence activity" digest: blocked attacks, failed logins and
+// recently modified files. Mostly noise; the parts worth a look are code files
+// changed outside the known-safe paths, WooCommerce fatal-error logs and
+// repeated failed logins on a user that exists.
+function classifyWordfenceActivity(subject, text) {
+  const lines = text.split('\n').map(l => oneLine(l));
+  const after = re => {
+    const i = lines.findIndex(l => re.test(l));
+    return i < 0 ? [] : lines.slice(i + 1);
+  };
+
+  const blockedBy = [
+    ...text.matchAll(/(?:Bloqueado por|Blocked by) ([^\n]+)/gi)
+  ].map(m => oneLine(m[1]));
+  const rules = [...new Set(blockedBy)];
+
+  const DATE = /^[A-Z][a-z]+ \d{1,2}, \d{4}/;
+  const modified = [];
+  let when = '';
+  for (const l of after(
+    /^(archivos modificados recientemente|recently modified files)/i
+  ).slice(0, 400)) {
+    if (DATE.test(l)) {
+      when = l.replace(/, \d{4}/, '');
+    } else if (
+      l &&
+      /[./]/.test(l) &&
+      !/^(esta lista|this list|modificados|archivo|file|modified)\b/i.test(l)
+    ) {
+      modified.push({ file: l, when });
+    }
+  }
+  const flagged = modified
+    .map(m => ({ ...m, level: modifiedLevel(m.file) }))
+    .filter(m => m.level);
+  const fatalLogs = modified.filter(m =>
+    /wc-logs\/fatal-errors-/i.test(m.file)
+  );
+
+  const failed = after(
+    /^(los 10 principales (inicios de sesi|accesos)|top 10 failed)/i
+  );
+  let existingAttempts = 0;
+  for (let i = 0; i + 2 < failed.length; i++) {
+    if (/^\d+$/.test(failed[i + 1]) && /^(s[ií]|yes)$/i.test(failed[i + 2])) {
+      existingAttempts += Number(failed[i + 1]);
+    }
+  }
+
+  const parts = [
+    `${blockedBy.length} blocked attack(s)${rules.length ? ` (${rules.join('; ')})` : ''}`,
+    `${modified.length} recently modified file(s)${flagged.length ? ` (${flagged.length} sensitive)` : ''}`,
+    `${existingAttempts} failed login(s) on existing users`
+  ];
+  const summary = `Wordfence weekly activity: ${parts.join(', ')}`;
+
+  const why = [];
+  const worstAct = flagged.some(m => m.level === 'act');
+  if (flagged.length) {
+    const list = flagged
+      .slice(0, 6)
+      .map(m => `${m.file}${m.when ? ` (${m.when})` : ''}`)
+      .join(', ');
+    why.push(
+      `${worstAct ? 'Code files in uploads/core' : 'Sensitive files changed'}: ${list}${flagged.length > 6 ? `, +${flagged.length - 6} more` : ''}. If you, an update, apply-headers.js or the site owner did it, fine; otherwise it may be a compromise (check the file and scan for malware)`
+    );
+  }
+  if (fatalLogs.length) {
+    why.push(
+      'WooCommerce logged fatal errors (wc-logs/fatal-errors-*.log): check the site and the log for the failing plugin'
+    );
+  }
+  if (existingAttempts >= 10) {
+    why.push(
+      `${existingAttempts} failed logins on a username that exists: consider 2FA or renaming that user`
+    );
+  }
+  if (why.length) {
+    return result(
+      'wordfence-activity',
+      'security',
+      worstAct ? 'act' : 'review',
+      summary,
+      `${why.join('. ')}.`
+    );
+  }
+  return result(
+    'wordfence-activity',
+    'security',
+    'discard',
+    summary,
+    'Weekly digest with nothing unusual: blocked attacks are the firewall doing its job, and the modified files are expected (logs, translations, caches, backups).'
+  );
 }
 
 function classify({ subject, from, text }) {
@@ -114,18 +239,31 @@ function classify({ subject, from, text }) {
         );
   }
 
+  if (/^(actividad de wordfence|wordfence activity)/i.test(subject)) {
+    return classifyWordfenceActivity(subject, text);
+  }
+
   if (/^(sucuri alert|alerta de sucuri)/i.test(subject)) {
     const event = text.match(/Event:\s*(.+)/i)?.[1]?.trim() || '';
     const ip = text.match(/IP Address:\s*(\S+)/i)?.[1] || '';
     const message = oneLine(text.match(/Message:\s*([\s\S]*)$/i)?.[1] || '');
     const summary = `Sucuri: ${event}${message ? ` — ${message}` : ''}`;
     if (SUCURI_CONTENT.test(event)) {
+      if (SUCURI_ROUTINE_MESSAGE.test(message) || LOCAL_IP.test(ip)) {
+        return result(
+          'sucuri-content',
+          'admin-notice',
+          'discard',
+          summary,
+          'Scheduled task or local server process (e.g. the daily Limit Login Attempts digest post), not a remote edit.'
+        );
+      }
       return result(
         'sucuri-content',
         'admin-notice',
-        'discard',
+        'review',
         summary,
-        'Routine content change (often a scheduled task). Review only if nobody edited content and the IP is unfamiliar.'
+        `Content changed from ${ip || 'an unknown IP'}, not a known scheduled task. Fine if you or an editor did it; otherwise check the post/page for defacement or injected links.`
       );
     }
     if (SUCURI_CODE.test(event)) {
@@ -156,7 +294,7 @@ function classify({ subject, from, text }) {
     );
   }
 
-  if (/trustedsite/i.test(from) || /^your site summary for/i.test(subject)) {
+  if (/trustedsite/i.test(from) && /^your site summary for/i.test(subject)) {
     const visits = text.match(/(\d[\d.,]*)\s+visits?\s+this\s+month/i)?.[1];
     const summary = `TrustedSite summary: ${visits ?? '?'} trustmark visits this month`;
     const problem = text.match(
@@ -240,7 +378,7 @@ function classify({ subject, from, text }) {
   }
 
   if (
-    /fatal error|technical difficulties|recovery mode|error cr[ií]tico/i.test(
+    /fatal error|technical (difficulties|issue)|recovery mode|error cr[ií]tico/i.test(
       all
     )
   ) {

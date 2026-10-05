@@ -156,6 +156,29 @@ function classify({ subject, from, text }) {
     );
   }
 
+  if (/trustedsite/i.test(from) || /^your site summary for/i.test(subject)) {
+    const visits = text.match(/(\d[\d.,]*)\s+visits?\s+this\s+month/i)?.[1];
+    const summary = `TrustedSite summary: ${visits ?? '?'} trustmark visits this month`;
+    const problem = text.match(
+      /blacklist|malware (detected|found)|certificate (has )?expire|vulnerabilit|site is down/i
+    );
+    return problem
+      ? result(
+          'trustedsite-summary',
+          'security',
+          'review',
+          summary,
+          `The summary mentions "${problem[0]}": open the TrustedSite dashboard.`
+        )
+      : result(
+          'trustedsite-summary',
+          'other',
+          'discard',
+          summary,
+          'Marketing-style traffic recap for the trustmark; nothing to do.'
+        );
+  }
+
   if (/security summary/i.test(subject)) {
     const num = label =>
       Number(
@@ -350,7 +373,11 @@ async function main() {
   if (out.trashFailed.length) process.exitCode = 1;
 }
 
-main().catch(err => {
-  console.error(`wp-mails-fetch error: ${err.message}`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error(`wp-mails-fetch error: ${err.message}`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { classify };

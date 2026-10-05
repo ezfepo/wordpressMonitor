@@ -313,6 +313,11 @@ const CATEGORY_GUIDE = {
     criteria:
       'Discard: routine post/page changes, often a scheduled task. Review only if nobody edited content and the IP is unfamiliar.'
   },
+  'trustedsite-summary': {
+    title: 'TrustedSite summaries',
+    criteria:
+      'Discard: monthly trustmark visit recap. Review only if it mentions a blacklist, malware, an expiring certificate or vulnerabilities.'
+  },
   'auto-update': {
     title: 'WordPress auto-updates',
     criteria: 'Discard: successful self-update.'

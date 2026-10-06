@@ -18,3 +18,6 @@ config.json
 
 # Local MCP server config — personal, never commit
 .mcp.json
+
+# Personal Claude Code settings and permissions — never commit
+.claude/settings.local.json

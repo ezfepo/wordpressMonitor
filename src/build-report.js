@@ -323,6 +323,11 @@ const CATEGORY_GUIDE = {
     criteria:
       'Discard: monthly trustmark visit recap. Review only if it mentions a blacklist, malware, an expiring certificate or vulnerabilities.'
   },
+  'wp-mail-smtp-summary': {
+    title: 'WP Mail SMTP summaries (weekly)',
+    criteria:
+      'Discard: weekly count of emails sent by the site (free plan, no failure data).'
+  },
   'auto-update': {
     title: 'WordPress auto-updates',
     criteria: 'Discard: successful self-update.'

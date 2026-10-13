@@ -317,6 +317,24 @@ function classify({ subject, from, text }) {
         );
   }
 
+  // WP Mail SMTP weekly digest (es: "Tu resumen semanal de correos
+  // electrónicos de WP Mail SMTP de <dominio>", en: "Your Weekly WP Mail SMTP
+  // Summary for <dominio>"). Free plan: only sent-email counts, no failures.
+  if (/wp mail smtp/i.test(subject) && /resumen|summary/i.test(subject)) {
+    const num = re => text.match(re)?.[1]?.replace(/[.,]/g, '') ?? null;
+    const total = num(
+      /(?:Total (?:de )?(?:correos(?: electr[oó]nicos)?|emails?))\s*(\d[\d.,]*)/i
+    );
+    const lastWeek = num(/(?:[ÚU]ltima semana|Last week)\s*(\d[\d.,]*)/i);
+    return result(
+      'wp-mail-smtp-summary',
+      'other',
+      'discard',
+      `WP Mail SMTP weekly summary: ${total ?? '?'} emails sent in total, ${lastWeek ?? '?'} last week`,
+      'Weekly sent-email count from WP Mail SMTP (free plan, no failure data); nothing to do.'
+    );
+  }
+
   if (/security summary/i.test(subject)) {
     const num = label =>
       Number(

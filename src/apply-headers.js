@@ -129,9 +129,12 @@ function exec(conn, cmd) {
 async function probe(url) {
   const res = await fetch(`${url}?wpm=${Date.now()}`, { redirect: 'follow' });
   await res.text();
+  // `upgrade-insecure-requests` alone (sent by the host or a plugin) restricts
+  // nothing, so it isn't treated as a CSP.
+  const csp = res.headers.get('content-security-policy');
   return {
     status: res.status,
-    csp: res.headers.get('content-security-policy'),
+    csp: csp?.trim().toLowerCase() === 'upgrade-insecure-requests' ? null : csp,
     hsts: res.headers.get('strict-transport-security')
   };
 }

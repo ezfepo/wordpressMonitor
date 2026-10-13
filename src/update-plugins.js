@@ -476,10 +476,14 @@ async function checkSecurityHeaders(url) {
       fetchHeaders(`${base}/wp-login.php`)
     ]);
     const missing = REQUIRED_SECURITY_HEADERS.filter(h => !home.headers.get(h));
-    // Only meaningful when the login page actually answered.
+    // Only meaningful when the login page actually answered. A CSP made only
+    // of `upgrade-insecure-requests` (sent by the host or a plugin) restricts
+    // nothing and doesn't break the editor, so it doesn't count.
+    const loginCsp = login.headers.get('content-security-policy') || '';
     const adminCsp =
       login.status < 400 &&
-      Boolean(login.headers.get('content-security-policy'));
+      loginCsp.trim().length > 0 &&
+      loginCsp.trim().toLowerCase() !== 'upgrade-insecure-requests';
     return {
       ok: missing.length === 0 && !adminCsp,
       missing,

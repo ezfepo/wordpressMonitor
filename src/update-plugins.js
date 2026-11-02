@@ -603,6 +603,7 @@ async function processSite(site, options, onProgress = () => {}) {
   const result = {
     site: site.name,
     host: site.sshHost,
+    url: siteUrl(site),
     status: 'ok',
     dryRun: options.dryRun,
     connected: false,

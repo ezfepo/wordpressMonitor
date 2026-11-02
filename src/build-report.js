@@ -209,6 +209,12 @@ function siteCard(r, phpSite) {
   out.push(
     `<article class="card"><h3>${esc(r.site)} <span class="pill ${esc(r.status)}">${esc(r.status)}</span></h3>`
   );
+  if (r.url) {
+    const base = r.url.replace(/\/+$/, '');
+    out.push(
+      `<p class="links"><a href="${esc(base)}/" target="_blank" rel="noopener">Site</a> &middot; <a href="${esc(base)}/wp-admin/" target="_blank" rel="noopener">WP Admin</a></p>`
+    );
+  }
   for (const e of r.errors) out.push(`<p class="bad">ERROR: ${esc(e)}</p>`);
   if (r.connected) {
     out.push(
@@ -472,7 +478,7 @@ const CSS = `
 body{margin:0;padding:16px;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,Segoe UI,sans-serif}
 main{max-width:1100px;margin:0 auto}
 h1{margin:0 0 4px}h2{margin:32px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}h3{margin:16px 0 6px}h4{margin:10px 0 2px}
-.muted{color:var(--muted)}.bad{color:var(--bad)}
+.links a{color:inherit}.muted{color:var(--muted)}.bad{color:var(--bad)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 14px}
 ul{margin:4px 0;padding-left:20px}

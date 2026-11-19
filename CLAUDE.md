@@ -15,6 +15,10 @@ translations (language packs) across all configured sites over SSH + WP-CLI. Nod
   `sites.json`; writes a Markdown + JSON report to `reports/` (gitignored).
 - `npm run wp:check` — same, but dry run (report available updates only, change nothing).
 - `node src/update-plugins.js --site <name> [--dry-run]` — run against a single site.
+- `npm run security:check` / `node src/security-check.js [--dry-run] [--site <name>] [--only id[,id]]` —
+  read-only security checks (admins, options, integrity, uploads-cron, sucuri-audit, db-scan,
+  public-site, exposed-files, backups, tls, abandoned); writes `reports/<ts>-security.json`.
+  `npm run security:accept` (`--accept`) stores the current state as the new baseline.
 - `npm run prettier` — format the entire repo in place with Prettier (`prettier --write .`).
 
 There is no build, lint, or test tooling configured yet. If you add one, update this file with
@@ -55,9 +59,85 @@ the corresponding commands (e.g. how to run a single test).
   in the report and in "Action needed", and says to re-run `apply-headers.js` for that
   site. It catches a plugin, hPanel or a rewritten `.htaccess` dropping the headers
   `apply-headers.js` set.
+- `src/lib/ssh.js` — SSH/WP-CLI plumbing shared by `update-plugins.js` and the security checks
+  (`loadSites`, `credentialsForSite`, `sshConnect`, `execCommand` with per-call timeout,
+  `shellQuote`, `wpCommand`, `siteUrl`, `CRITICAL_ERROR_MARKER`).
+- `src/security-check.js` + `src/lib/security/` — post-incident security checks (the "wpsip"
+  backdoor, Jul 2026: valid admin login → uploaded zip → plugin activated → fake admin →
+  persistent mu-plugin, `wpsip_*` options, cron event, Telegram control channel; the 5 sites
+  share one server user so it spread). **Everything is read-only on the servers.** One module per
+  check (`admins`, `options`, `integrity`, `uploads-cron`, `sucuri-audit`, `db-scan`,
+  `public-site`, `exposed-files`, `backups`, `tls`, `abandoned`), registered in
+  `lib/security/index.js`; each exports `{ id, title, needsSsh, prepare?(sites, shared), run(ctx) }`
+  and returns `{ findings: [{severity, message}], snapshot, advance? }`. `security-check.js` opens
+  ONE SSH connection per site shared by that site's checks (sites run concurrently, cap
+  `SITE_CONCURRENCY = 5`, lower it if SSH errors appear), runs each check once, and a check that
+  throws becomes an `alert` row ("check failed") so a blind spot is never silent. `lib/security/common.js`
+  has `sh()` (remote snippet under `timeout`, run inside the site folder) and `wpEval()` (PHP body in ONE
+  `wp eval`, params passed as base64 JSON; uses `$wpdb`, never `wp db query` — proc_open is disabled; no
+  `<(...)`/`/dev/fd` in remote shells). Severities: `ok|info|warn|alert`. Rules that need no baseline
+  (expected admin count, IOC list, PHP in uploads, `users_can_register`, `default_role`, config
+  directives) alert from the first run; baseline-diff rules wait for a baseline.
+  - **Baselines**: `state/security-baseline.json` (gitignored; NOT `reports/` or `.claude/tmp`, which are
+    purged), `{version, sites: {<site>: {<check>: {updatedAt, state}}}}`, written atomically once per
+    run. The first real run of a site+check learns silently ("baseline created"); `--accept [--site]`
+    overwrites with the current snapshot; `--dry-run` compares but never writes. `advance` is what a
+    normal real run stores on an existing baseline (only `sucuri-audit`'s `lastEpoch` cursor; known
+    IPs are only learned on first run/`--accept`). `WPM_STATE_DIR` overrides the folder (tests only).
+  - `admins`: admins by role plus users with admin capabilities (`manage_options`, `install_plugins`...);
+    per-user password-hash signature detects modification; application passwords alert unless
+    already in the baseline. `options`: siteurl/home host vs the domain folder, `users_can_register`,
+    `default_role`, `admin_email` vs baseline. `integrity`: `wp core verify-checksums` (benign:
+    `wp-config-sample.php` missing, `error_log` files → info), `wp plugin verify-checksums --all
+--format=json` (404 from wordpress.org → "not verifiable", info), mu-plugins vs allowlist (new vs
+    baseline = alert, known but unlisted = warn), new drop-ins vs baseline, grep for
+    `auto_prepend_file|eval(|base64_decode...` in `.htaccess`/`.user.ini`/`wp-config.php` (lines naming
+    `wordfence-waf.php` ignored; only file:line + keyword are reported, never line content).
+    `uploads-cron`: PHP in uploads (alert; `uploads/mailchimp-for-wp/debug-log.php` → info), cron hooks vs
+    baseline (warn), IOC (`iocPatterns`) in options/hooks/users/mu-plugins/plugins/file names (alert), ONE grep
+    pass over `wp-content` for `api.telegram.org` + obfuscation wrappers (`codeScanIgnore`,
+    `codeScanKnownFalsePositives` e.g. wpforms-lite `Chain.php` → info). `sucuri-audit`: parses
+    `uploads/sucuri/sucuri-auditqueue.php` / `sucuri-auditlogs.php` lines
+    `<epoch>_<id>:"Level: user, ip; action; details"` newer than the baseline cursor; alerts on plugin
+    install/activate/deactivate/delete (muted to info when made by 127.0.0.1, i.e. WP-CLI updates), user
+    created, role/password change, `.zip/.php/.phtml/.phar/.sh` added, theme changes and logins from IPs
+    not in `knownIps`; "not available" when the site has no Sucuri files. Replaying the real history
+    reproduces the incident (wpsip340.zip, plugin activated, fake user, from 156.221.22.255).
+    `db-scan`: `<script`, `eval(`, `base64_decode`, `<iframe`, hidden links in posts/postmeta/options via
+    `$wpdb` (transients, `oembed_cache` posts and `dbScanIgnore*Prefixes` skipped, own domain +
+    `dbScanAllowedDomains` allowed for `src=`); reports only ID/option name + pattern; hits are stored
+    as content hashes in the baseline: new or edited → warn, known and unchanged → info.
+    `public-site`: GETs the homepage as a visitor and as Googlebot (manual redirects; a WAF 403 for the fake
+    Googlebot is info), external domains from `<script src>`/`<iframe src>`/`<link>` vs baseline (new = alert),
+    `spamKeywords` (warn), redirects/meta-refresh/`location=` to foreign domains (alert), critical-error
+    marker. `exposed-files`: validates content, not status (soft-404s answer 200 with HTML): log
+    patterns, `ref: refs/`, `KEY=value`, `DB_PASSWORD`, `PK`/gzip magic, SQL dump text; open
+    `xmlrpc.php` and user enumeration (`/wp-json/wp/v2/users`, `/?author=1`) are warn unless the site sets
+    `expectXmlrpc` / `expectUserEnumeration`. `backups`: Hostinger's public API has **no shared-hosting
+    backup endpoint** (only `vps_backups_*`), so it always reports `unavailable`; implement `listBackups()` in
+    `lib/hostinger.js` if one appears (`maxBackupAgeDays`, default 3, is already in the defaults). `tls`:
+    `tls.connect` expiry (warn < `tlsWarnDays` 14, alert < `tlsAlertDays` 7, untrusted = alert) plus domain expiry
+    from `GET /api/domains/v1/portfolio` (`hostinger.listDomains()`; `domainWarnDays` 30 / `domainAlertDays` 14;
+    domains not in the Hostinger account are skipped). `abandoned`: reuses the newest `wp-update.json`
+    (`plugins.installed` / `themes.installed`, now with `status`), deduplicates slugs, asks the WordPress.org
+    API (`closed` = alert, last update older than `abandonedYears` = warn, not on wordpress.org =
+    "unknown" info, inactive plugin = warn, inactive theme = info).
+  - Config: defaults in `lib/security/config.js`, overridden by `config.json` `security` and then by the
+    same keys in a site's `sites.json` entry (arrays are merged). Keys: `expectedAdmins` (default 1),
+    `allowedMuPlugins` (default hostinger-auto-updates.php, installatron_hide_status_test.php,
+    _patchstack.php, index.php; e.g. add `gd-system-plugin` per site if legitimate), `iocPatterns`,
+    `allowedUploadsPhp`, `allowedTelegramPlugins`, `codeScanIgnore`, `codeScanKnownFalsePositives`,
+    `dbScanMaxResults` / `dbScanAllowedDomains` / `dbScanIgnoreOptionPrefixes` / `dbScanIgnoreMetaPrefixes`,
+    `spamKeywords`, `maxBackupAgeDays`, `tlsWarnDays`, `tlsAlertDays`, `domainWarnDays`,
+    `domainAlertDays`, `abandonedYears`, `expectXmlrpc`, `expectUserEnumeration`.
+  - Output: `reports/<ts>-security.json` = `{timestamp, dryRun, checks, results: [{site, check, severity,
+details}]}` (not written with `--accept`). `build-report.js` renders a "Security checks" section (table per
+    site with warn/alert rows, info as muted text, ok checks collapsed) and feeds every alert into "Action
+    needed". Exit code 1 when any alert. These checks replace the old server-side
+    `scripts/validate-sites.sh` (removed).
 - `sites.json` (gitignored, template in `sites.json.example`) — site inventory and
   credentials in one file: name, sshHost, sshPort, sshUser, wpPath, siteUrl (optional,
-  used by the post-update health check), excludePlugins, excludeThemes, plus either
+  used by the post-update health check), excludePlugins, excludeThemes, optional security fields (see above), plus either
   `sshPassword` or `sshKeyPath` (+ optional `sshKeyPassphrase`) per site. Never committed.
 - `.claude/skills/wp-update-plugins/` — interactive-only entry point (`/wp-update-plugins`)
   for use inside a Claude Code session: runs the script only
@@ -145,14 +225,16 @@ the corresponding commands (e.g. how to run a single test).
 
 There is no scheduled automation. `.claude/scripts/run-daily-update.ps1` (triggered from a
 desktop `.bat`, see `wordpressMonitor Update.bat.example`) shows a menu, or takes
-`-Mode wp|dmarc|all|dryrun|dmarcdry`. Menu: **Update** — 1 Update WordPress sites
-(`node src/update-plugins.js`, then `node src/php-check.js`, `node src/vuln-check.js` and
-`node src/wp-mails-fetch.js`), 2 Process DMARC reports (`node src/dmarc-fetch.js`),
-3 Do everything (both); **Check only** (changes nothing) — 4 Check WordPress sites
-(`dryrun`: `update-plugins.js --dry-run` + `php-check.js --dry-run` + `vuln-check.js` +
-`wp-mails-fetch.js --dry-run`: nothing updated, no PHP bump, no emails trashed),
-5 Check DMARC reports (`dmarcdry`, `dmarc-fetch.js --dry-run`: parses and reports but
-trashes nothing, so it can be repeated). When done,
+`-Mode all|wp|security|secdry|secbaseline|dmarc|dryrun|dmarcdry` and, for the security modes, `-Check <id>`.
+Pressing **Enter runs option 1**. Menu: **1 Run everything** (`all`: `update-plugins.js` → `php-check.js` →
+`vuln-check.js` → `wp-mails-fetch.js` → `security-check.js` (all checks) → `dmarc-fetch.js` → report);
+**Individual steps** — 2 Update WordPress sites (`wp`: update-plugins + php-check + vuln-check + wp-mails),
+3 Security checks (`security`), 4 One security check (submenu, `security -Check <id>`), 5 Process DMARC
+reports (`dmarc`); **Check only** (changes nothing) — 6 Check WordPress sites (`dryrun`:
+`update-plugins.js --dry-run` + `php-check.js --dry-run` + `vuln-check.js` + `wp-mails-fetch.js --dry-run`),
+7 Check security (`secdry`, `security-check.js --dry-run`), 8 Check DMARC reports (`dmarcdry`,
+`dmarc-fetch.js --dry-run`); **Baseline** — 9 Accept current state as security baseline (`secbaseline`,
+`security-check.js --accept`; no report is built). When done,
 `src/build-report.js` merges the run's JSON into `reports/<ts>-report.html`, which is opened
 automatically. This replaced the old Gmail-draft report. `npm run report` rebuilds it by hand.
 
@@ -161,7 +243,7 @@ automatically. This replaced the old Gmail-draft report. `npm run report` rebuil
   shown: `retentionDays` (default 3), `gmail.labels.dmarc` / `gmail.labels.wordpress`
   (default `dmarc` / `wordpress`) — the Gmail labels the skills read from —
   `gmail.auth` (`{ clientId, clientSecret, refreshToken }`, written by `npm run gmail:auth`,
-  read by `src/lib/gmail.js`), `hostinger.apiToken` (read by `src/lib/hostinger.js`), and
+  read by `src/lib/gmail.js`), `hostinger.apiToken` (read by `src/lib/hostinger.js`), `security` (see the security-check section for its keys), and
   `dmarc.knownSources` (your legitimate senders; default none, so every source shows as
   `unknown`). `src/lib/config.js` (`readConfig()` / `updateConfig()`) is the single
   read/write path every script uses — the skills, the runner, `parse-dmarc.js`, `gmail.js`,
@@ -182,9 +264,10 @@ automatically. This replaced the old Gmail-draft report. `npm run report` rebuil
 
 - `reports/<timestamp>-report.html` — the human report (action needed, sites, WordPress
   emails, DMARC highlights).
-- `reports/<ts>-wp-update.md|json`, `<ts>-php.json`, `<ts>-vuln.json`, `<ts>-wp-mails.json`,
+- `reports/<ts>-wp-update.md|json`, `<ts>-php.json`, `<ts>-vuln.json`, `<ts>-security.json`, `<ts>-wp-mails.json`,
   `<ts>-dmarc.json` — the inputs the HTML is built from.
 - `.claude/logs/<timestamp>-<wp-update|wp-check|dmarc-check>.log` (+ `.jsonl` raw stream).
+- `state/security-baseline.json` — security baselines (gitignored, never purged).
 - All gitignored.
 
 ## Formatting

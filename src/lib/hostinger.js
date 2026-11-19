@@ -69,6 +69,12 @@ function clearCache(username, domain) {
   );
 }
 
+// Domain portfolio of the account: [{ domain, status, expires_at, ... }].
+async function listDomains() {
+  const json = await api('GET', '/api/domains/v1/portfolio');
+  return Array.isArray(json) ? json : json.data || [];
+}
+
 // Highest key of a version map, sorted numerically (8.5 > 8.4 > ... > 7.3).
 function highestVersion(versionMap) {
   const versions = Object.keys(versionMap || {});
@@ -89,5 +95,6 @@ module.exports = {
   getPhpDetails,
   updatePhpVersion,
   clearCache,
+  listDomains,
   highestVersion
 };

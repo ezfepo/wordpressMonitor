@@ -14,6 +14,19 @@
   "hostinger": {
     "apiToken": ""
   },
+  "security": {
+    "allowedMuPlugins": [],
+    "iocPatterns": ["wpsip", "sendinfo"],
+    "spamKeywords": ["casino", "viagra", "cialis", "pharma"],
+    "maxBackupAgeDays": 3,
+    "tlsWarnDays": 14,
+    "tlsAlertDays": 7,
+    "domainWarnDays": 30,
+    "domainAlertDays": 14,
+    "dbScanMaxResults": 25,
+    "dbScanAllowedDomains": [],
+    "allowedTelegramPlugins": []
+  },
   "dmarc": {
     "knownSources": [
       {

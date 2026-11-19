@@ -29,15 +29,22 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { Client } = require('ssh2');
 const { formatTimestamp, timestampSlug } = require('./lib/format');
 const { runWithConcurrency } = require('./lib/concurrency');
+const {
+  loadSites,
+  credentialsForSite,
+  sshConnect,
+  execCommand,
+  parseWpJson,
+  shellQuote,
+  wpCommand,
+  siteUrl,
+  CRITICAL_ERROR_MARKER
+} = require('./lib/ssh');
 
 const ROOT = path.resolve(__dirname, '..');
-const SITES_FILE = path.join(ROOT, 'sites.json');
 const REPORTS_DIR = path.join(ROOT, 'reports');
-const SSH_READY_TIMEOUT_MS = 20000;
-const COMMAND_TIMEOUT_MS = 300000;
 // All sites currently share one Hostinger server/user; cap how many run at
 // once to avoid overloading shared hosting.
 const SITE_CONCURRENCY = 5;
@@ -58,117 +65,6 @@ function parseArgs(argv) {
     }
   }
   return args;
-}
-
-function loadSites() {
-  if (!fs.existsSync(SITES_FILE)) {
-    throw new Error(`Missing sites.json at ${SITES_FILE}`);
-  }
-  const config = JSON.parse(fs.readFileSync(SITES_FILE, 'utf8'));
-  if (!Array.isArray(config.sites) || config.sites.length === 0) {
-    throw new Error('sites.json must contain a non-empty "sites" array');
-  }
-  for (const site of config.sites) {
-    for (const field of ['name', 'sshHost', 'sshUser', 'wpPath']) {
-      if (!site[field]) {
-        throw new Error(
-          `sites.json entry ${JSON.stringify(site.name || site)} is missing "${field}"`
-        );
-      }
-    }
-  }
-  return config.sites;
-}
-
-function credentialsForSite(site) {
-  const { sshPassword, sshKeyPath, sshKeyPassphrase } = site;
-  if (sshKeyPath) {
-    if (!fs.existsSync(sshKeyPath)) {
-      throw new Error(
-        `SSH key for site "${site.name}" not found at ${sshKeyPath} (sshKeyPath in sites.json)`
-      );
-    }
-    return {
-      privateKey: fs.readFileSync(sshKeyPath, 'utf8'),
-      passphrase: sshKeyPassphrase
-    };
-  }
-  if (sshPassword) {
-    return { password: sshPassword };
-  }
-  throw new Error(
-    `No credentials for site "${site.name}": set sshPassword or sshKeyPath in sites.json`
-  );
-}
-
-function sshConnect(site, credentials) {
-  return new Promise((resolve, reject) => {
-    const conn = new Client();
-    conn
-      .on('ready', () => resolve(conn))
-      .on('error', err =>
-        reject(new Error(`SSH connection failed: ${err.message}`))
-      )
-      .connect({
-        host: site.sshHost,
-        port: site.sshPort || 22,
-        username: site.sshUser,
-        readyTimeout: SSH_READY_TIMEOUT_MS,
-        ...credentials
-      });
-  });
-}
-
-function execCommand(conn, command) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(
-        new Error(
-          `Command timed out after ${COMMAND_TIMEOUT_MS / 1000}s: ${command}`
-        )
-      );
-    }, COMMAND_TIMEOUT_MS);
-    conn.exec(command, (err, stream) => {
-      if (err) {
-        clearTimeout(timer);
-        return reject(err);
-      }
-      let stdout = '';
-      let stderr = '';
-      stream
-        .on('close', code => {
-          clearTimeout(timer);
-          resolve({ code: code ?? 0, stdout, stderr });
-        })
-        .on('data', data => {
-          stdout += data.toString();
-        })
-        .stderr.on('data', data => {
-          stderr += data.toString();
-        });
-    });
-  });
-}
-
-// WP-CLI can print PHP notices/warnings around the JSON payload; extract the
-// outermost JSON array before parsing.
-function parseWpJson(stdout, context) {
-  const start = stdout.indexOf('[');
-  const end = stdout.lastIndexOf(']');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error(
-      `Could not parse WP-CLI JSON output (${context}): ${stdout.slice(0, 500)}`
-    );
-  }
-  return JSON.parse(stdout.slice(start, end + 1));
-}
-
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
-}
-
-function wpCommand(site, args) {
-  return `wp ${args} --path=${shellQuote(site.wpPath)} --skip-plugins --skip-themes`;
 }
 
 function truncateOutput(result) {
@@ -404,20 +300,7 @@ function checkPhpCompatibility(phpVersion, items) {
   };
 }
 
-// Explicit siteUrl wins; otherwise derive it from the domain folder inside
-// wpPath (domains/<domain>/public_html -> https://<domain>), the same
-// derivation php-check.js and wp-mails-fetch.js already use. Returns null if
-// neither is available.
-function siteUrl(site) {
-  if (site.siteUrl) {
-    return site.siteUrl;
-  }
-  const domain = (site.wpPath || '').match(/domains\/([^/]+)/)?.[1];
-  return domain ? `https://${domain}` : null;
-}
-
 const HEALTH_CHECK_TIMEOUT_MS = 15000;
-const CRITICAL_ERROR_MARKER = 'There has been a critical error on this website';
 
 // Fetches the site's homepage after a real update and flags anything that
 // looks broken: a non-2xx/3xx status, a connection failure, or WordPress's
@@ -518,7 +401,8 @@ async function processItemSection(
   // available — vuln-check.js reuses this instead of re-listing over SSH.
   section.installed = items.map(item => ({
     name: item.name,
-    version: item.version
+    version: item.version,
+    status: item.status
   }));
   const available = items.filter(item => item.update === 'available');
   section.available = available.map(item => ({

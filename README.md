@@ -86,32 +86,77 @@ Each `wp:update` / `wp:check` run writes a timestamped report to `reports/`
 summary. One site or category failing doesn't stop the others; the process
 exits with code `1` if any site ended up in a non-OK state.
 
+### Security checks (post-incident)
+
+`node src/security-check.js [--dry-run] [--site <name>] [--only id[,id]]` runs read-only
+checks over SSH, HTTP, TLS and public APIs (`npm run security:check`). Every check can
+run alone with `--only`:
+
+| id              | What it looks at                                                                                                                                                                                                     |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `admins`        | administrators (ID, login, email, created, application passwords); new / removed / modified admins, users with admin capabilities outside the baseline, application passwords, count vs `expectedAdmins` (default 1) |
+| `options`       | `siteurl`/`home` vs the domain, `users_can_register`, `default_role`, `admin_email` vs baseline                                                                                                                      |
+| `integrity`     | core and plugin `verify-checksums`, mu-plugins vs allowlist, new drop-ins, `auto_prepend_file` / `eval(` / `base64_decode` in `.htaccess`, `.user.ini`, `wp-config.php`                                              |
+| `uploads-cron`  | PHP/PHTML/PHAR in uploads, new cron hooks, IOC (`wpsip`, `sendinfo`) in options, hooks, users, mu-plugins, plugins and file names, `api.telegram.org` and obfuscated code in `wp-content`                            |
+| `sucuri-audit`  | Sucuri audit queue since the last run: plugin/theme changes, new users, role changes, `.zip`/`.php` uploads, logins from new IPs                                                                                     |
+| `db-scan`       | `<script`, `eval(`, `base64_decode`, `<iframe`, hidden links in posts, postmeta, options                                                                                                                             |
+| `public-site`   | homepage external domains vs baseline, SEO-spam keywords, redirects to foreign domains (also as Googlebot)                                                                                                           |
+| `exposed-files` | `debug.log`, `error_log`, `.git/HEAD`, `.env`, config backups, `.sql`/`.zip` backups, open `xmlrpc.php`, user enumeration                                                                                            |
+| `backups`       | **unavailable**: Hostinger's API has no backup endpoint for shared hosting (VPS only)                                                                                                                                |
+| `tls`           | TLS certificate expiry (warn < 14 days, alert < 7) and domain expiry from the Hostinger API                                                                                                                          |
+| `abandoned`     | inactive plugins/themes, plugins closed on wordpress.org, not updated in 2+ years                                                                                                                                    |
+
+**Baselines** live in `state/security-baseline.json` (gitignored; not in `reports/` because that is purged).
+The first run for a site and check learns it silently ("baseline created"). `--accept [--site <name>]`
+stores the current state after you reviewed changes; `--dry-run` compares but never writes. Rules that do not
+need a baseline (expected admin count, IOC list, PHP in uploads, `users_can_register`...) alert from the first run.
+Results go to `reports/<ts>-security.json` as `{site, check, severity: ok|info|warn|alert, details}`; alerts also
+show up under "Action needed" in the HTML report and make the exit code `1`.
+
+Optional settings: `security` in `config.json` and per-site fields in `sites.json` (see the example files):
+`expectedAdmins`, `allowedMuPlugins`, `dbScanAllowedDomains`, `expectXmlrpc`, `expectUserEnumeration`,
+`iocPatterns`, `spamKeywords`, `tlsWarnDays`, `tlsAlertDays`, ...
+
 ### Running on demand (menu + HTML report)
 
 `.claude/scripts/run-daily-update.ps1` runs every step as a plain Node script, so Claude Code
 is not needed to run it (it can also be started from Task Scheduler).
-Without arguments it shows a menu (or pass `-Mode wp|dmarc|all|dryrun|dmarcdry`):
+Without arguments it shows a menu; **Enter runs option 1**. Or pass
+`-Mode all|wp|security|secdry|secbaseline|dmarc|dryrun|dmarcdry` (and, with
+`security`/`secdry`/`secbaseline`, `-Check <id>` for a single security check):
 
-**Update**
+1. **Run everything** (`-Mode all`, the default) — in this order:
+   `update-plugins` → `php-check` → `vuln-check` → `wp-mails-fetch` →
+   `security-check` (all checks) → `dmarc-fetch` → HTML report.
 
-1. **Update WordPress sites** — `node src/update-plugins.js`: updates plugins,
-   themes and translations, then `node src/php-check.js` checks/bumps PHP via the
+**Individual steps**
+
+2. **Update WordPress sites** (`-Mode wp`) — `node src/update-plugins.js` updates
+   plugins, themes and translations, then `node src/php-check.js` checks/bumps PHP via the
    Hostinger API, then `node src/vuln-check.js` checks every installed
-   plugin/theme against WPVulnerability.net's known-vulnerability database,
+   plugin/theme against the WPVulnerability.net known-vulnerability database,
    then `node src/wp-mails-fetch.js` processes the WordPress notification
    emails (Gmail `wordpress` label, classified by rules, moved to the trash
    afterwards).
-2. **Process DMARC reports** — `node src/dmarc-fetch.js`: parses the reports under the Gmail
+3. **Security checks** (`-Mode security`) — `node src/security-check.js`, all checks (see below).
+4. **One security check** — pick a check id from a list (`-Mode security -Check <id>`).
+5. **Process DMARC reports** (`-Mode dmarc`) — `node src/dmarc-fetch.js`: parses the reports under the Gmail
    `dmarc` label, adds highlights and moves the processed emails to the trash.
-3. **Do everything** — both.
 
 **Check only** (changes nothing)
 
-4. **Check WordPress sites** — nothing is updated, no PHP bump, no emails trashed
-   (`-Mode dryrun`); the vulnerability check runs the same either way since it's
+6. **Check WordPress sites** — nothing is updated, no PHP bump, no emails trashed
+   (`-Mode dryrun`); the vulnerability check runs the same either way since it is
    read-only.
-5. **Check DMARC reports** — parses and reports but trashes nothing, so it can be
+7. **Check security** (`-Mode secdry`) — `security-check.js --dry-run`: compares with the
+   baselines but never writes them.
+8. **Check DMARC reports** — parses and reports but trashes nothing, so it can be
    repeated (`-Mode dmarcdry`).
+
+**Baseline**
+
+9. **Accept current state as security baseline** (`-Mode secbaseline`) — run it after
+   reviewing a legitimate change (new admin, new plugin domain, ...).
 
 When it finishes it builds `reports/<timestamp>-report.html` (via
 `src/build-report.js`) and opens it, then deletes files older than

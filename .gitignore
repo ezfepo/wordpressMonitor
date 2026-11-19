@@ -21,3 +21,5 @@ config.json
 
 # Personal Claude Code settings and permissions — never commit
 .claude/settings.local.json
+
+state/

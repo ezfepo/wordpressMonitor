@@ -1,19 +1,23 @@
 # wordpressMonitor — on-demand runner (menu).
 #
-# Usage:  run-daily-update.ps1 [-Mode wp|dmarc|all|dryrun]
-# Without -Mode it shows a menu (Update: 1 WordPress, 2 DMARC, 3 both;
-# Check only: 4 WordPress, 5 DMARC).
+# Usage:  run-daily-update.ps1 [-Mode all|wp|security|secdry|secbaseline|dmarc|dryrun|dmarcdry] [-Check <id>]
+# Without -Mode it shows a menu; pressing Enter runs option 1 (everything).
 #
 # Every mode runs plain Node scripts; Claude Code is not needed:
-#   wp     -> node src/update-plugins.js (updates) + src/php-check.js (PHP bump
-#             and cache clear via Hostinger API) + src/vuln-check.js (known
-#             vulnerabilities via WPVulnerability.net, read-only) +
-#             src/wp-mails-fetch.js (WordPress emails)
-#   dmarc  -> node src/dmarc-fetch.js (DMARC reports from Gmail API)
-#   all    -> both
-#   dryrun -> same as wp, with --dry-run on the update, PHP and email steps
-#             (nothing is changed or trashed)
-#   dmarcdry -> node src/dmarc-fetch.js --dry-run (parses reports, trashes nothing)
+#   all         -> option 1, in this order: src/update-plugins.js, src/php-check.js,
+#                  src/vuln-check.js, src/wp-mails-fetch.js, src/security-check.js
+#                  (all checks), src/dmarc-fetch.js, then the HTML report
+#   wp          -> update-plugins + php-check (PHP bump and cache clear via the
+#                  Hostinger API) + vuln-check (WPVulnerability.net, read-only) +
+#                  wp-mails-fetch (WordPress emails)
+#   security    -> src/security-check.js (read-only checks; -Check <id> runs just one)
+#   secdry      -> security-check.js --dry-run (compares, never writes the baseline)
+#   secbaseline -> security-check.js --accept (stores the current state as the
+#                  new security baseline; no report)
+#   dmarc       -> src/dmarc-fetch.js (DMARC reports from the Gmail API)
+#   dryrun      -> same as wp, with --dry-run on the update, PHP and email steps
+#                  (nothing is changed or trashed)
+#   dmarcdry    -> src/dmarc-fetch.js --dry-run (parses reports, trashes nothing)
 # Afterwards src/build-report.js merges the run's JSON results into
 # reports/<ts>-report.html, which is opened automatically. Files older than
 # retentionDays (config.json) are then deleted from .claude/tmp,
@@ -22,11 +26,22 @@
 # Logs each run to .claude\logs\ (gitignored) for troubleshooting.
 
 param(
-  [ValidateSet('wp', 'dmarc', 'all', 'dryrun', 'dmarcdry')]
-  [string]$Mode
+  [ValidateSet('all', 'wp', 'security', 'secdry', 'secbaseline', 'dmarc', 'dryrun', 'dmarcdry')]
+  [string]$Mode,
+  [ValidateSet('admins', 'options', 'integrity', 'uploads-cron', 'sucuri-audit', 'db-scan', 'public-site', 'exposed-files', 'backups', 'tls', 'abandoned')]
+  [string]$Check
 )
 
 $ErrorActionPreference = 'Stop'
+
+$securityChecks = @(
+  'admins', 'options', 'integrity', 'uploads-cron', 'sucuri-audit', 'db-scan',
+  'public-site', 'exposed-files', 'backups', 'tls', 'abandoned'
+)
+
+# Plain copy of -Check: the parameter itself is ValidateSet-bound and cannot
+# be assigned $null by the menu.
+$selectedCheck = $Check
 
 # node's stdout is UTF-8; without this, non-ASCII characters (em dashes,
 # etc.) get mis-decoded into mojibake (e.g. "—" shows as "ГÇö"). Setting
@@ -48,26 +63,58 @@ if ([Environment]::UserInteractive -and -not [Console]::IsOutputRedirected) {
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $repoRoot
 
+function Select-SecurityCheck {
+  Write-Host ''
+  Write-Host 'Which security check?'
+  for ($i = 0; $i -lt $securityChecks.Count; $i++) {
+    Write-Host ("  {0,2}. {1}" -f ($i + 1), $securityChecks[$i])
+  }
+  $pick = (Read-Host 'Choose (number or name, Enter to cancel)').Trim().ToLower()
+  if ($pick -match '^\d+$' -and [int]$pick -ge 1 -and [int]$pick -le $securityChecks.Count) {
+    return $securityChecks[[int]$pick - 1]
+  }
+  if ($securityChecks -contains $pick) { return $pick }
+  return $null
+}
+
 if (-not $Mode) {
   Write-Output 'wordpressMonitor - what do you want to do?'
   Write-Output ''
-  Write-Output '  Update'
-  Write-Output '   1. Update WordPress sites      (plugins, themes, translations, PHP)'
-  Write-Output '   2. Process DMARC reports       (processed emails go to the trash)'
-  Write-Output '   3. Do everything               (1 + 2)'
+  Write-Output '   1. Run everything              (update sites, PHP, vulnerabilities, WP emails,'
+  Write-Output '                                   security checks, DMARC)   [default: Enter]'
+  Write-Output ''
+  Write-Output '  Individual steps'
+  Write-Output '   2. Update WordPress sites      (plugins, themes, translations, PHP, vulnerabilities, WP emails)'
+  Write-Output '   3. Security checks             (all checks, read-only)'
+  Write-Output '   4. One security check          (pick from a list)'
+  Write-Output '   5. Process DMARC reports       (processed emails go to the trash)'
   Write-Output ''
   Write-Output '  Check only (changes nothing)'
-  Write-Output '   4. Check WordPress sites       (see what is pending)'
-  Write-Output '   5. Check DMARC reports         (emails stay in Gmail, can be repeated)'
+  Write-Output '   6. Check WordPress sites       (see what is pending)'
+  Write-Output '   7. Check security              (compares with the baseline, does not save it)'
+  Write-Output '   8. Check DMARC reports         (emails stay in Gmail, can be repeated)'
+  Write-Output ''
+  Write-Output '  Baseline'
+  Write-Output '   9. Accept current state as security baseline  (after reviewing legitimate changes)'
   Write-Output ''
   Write-Output '   Q. Quit'
-  $choice = Read-Host 'Choose'
-  switch ($choice.Trim().ToLower()) {
-    '1' { $Mode = 'wp' }
-    '2' { $Mode = 'dmarc' }
-    '3' { $Mode = 'all' }
-    '4' { $Mode = 'dryrun' }
-    '5' { $Mode = 'dmarcdry' }
+  $choice = Read-Host 'Choose [1]'
+  $choice = $choice.Trim().ToLower()
+  if ($choice -eq '') { $choice = '1' }
+  switch ($choice) {
+    '1' { $Mode = 'all' }
+    '2' { $Mode = 'wp' }
+    '3' { $Mode = 'security' }
+    '4' {
+      $Mode = 'security'
+      $selectedCheck = Select-SecurityCheck
+      if (-not $selectedCheck) { Write-Output 'Nothing to do.'; exit 0 }
+    }
+    '5' { $Mode = 'dmarc' }
+    '6' { $Mode = 'dryrun' }
+    '7' { $Mode = 'secdry' }
+    '8' { $Mode = 'dmarcdry' }
+    '9' { $Mode = 'secbaseline' }
     default { Write-Output 'Nothing to do.'; exit 0 }
   }
 }
@@ -104,6 +151,21 @@ function Invoke-NodeScript {
   $script:SkillExit = $LASTEXITCODE
 }
 
+# Runs one step and folds its exit code into the run's exit code.
+function Invoke-Step {
+  param([string[]]$NodeArgs, [string]$LogName, [string]$Title)
+  Invoke-NodeScript -NodeArgs $NodeArgs -LogName $LogName -Title $Title
+  $script:exitCode = [Math]::Max($script:exitCode, $script:SkillExit)
+}
+
+# security-check.js arguments: optional --only <id>, plus any extra flags.
+function Get-SecurityArgs {
+  param([string[]]$Extra = @())
+  $a = @('src/security-check.js') + $Extra
+  if ($selectedCheck) { $a += @('--only', $selectedCheck) }
+  return $a
+}
+
 function Remove-OldFiles {
   $cutoff = (Get-Date).AddDays(-$retentionDays)
   foreach ($dir in @('.claude\tmp', '.claude\logs', 'reports')) {
@@ -125,44 +187,47 @@ function Remove-OldFiles {
 
 $LogFiles = @()
 $exitCode = 0
+$buildReport = $true
 try {
   if ($Mode -in 'wp', 'all') {
-    Invoke-NodeScript -NodeArgs @('src/update-plugins.js') -LogName 'wp-update' -Title 'Update WordPress sites'
-    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
-    Invoke-NodeScript -NodeArgs @('src/php-check.js') -LogName 'php-check' -Title 'Check PHP versions'
-    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
-    Invoke-NodeScript -NodeArgs @('src/vuln-check.js') -LogName 'vuln-check' -Title 'Check known vulnerabilities'
-    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
-    Invoke-NodeScript -NodeArgs @('src/wp-mails-fetch.js') -LogName 'wp-mails' -Title 'Process WordPress emails'
-    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+    Invoke-Step -NodeArgs @('src/update-plugins.js') -LogName 'wp-update' -Title 'Update WordPress sites'
+    Invoke-Step -NodeArgs @('src/php-check.js') -LogName 'php-check' -Title 'Check PHP versions'
+    Invoke-Step -NodeArgs @('src/vuln-check.js') -LogName 'vuln-check' -Title 'Check known vulnerabilities'
+    Invoke-Step -NodeArgs @('src/wp-mails-fetch.js') -LogName 'wp-mails' -Title 'Process WordPress emails'
   }
   if ($Mode -eq 'dryrun') {
-    Invoke-NodeScript -NodeArgs @('src/update-plugins.js', '--dry-run') -LogName 'wp-check' -Title 'Check WordPress sites'
-    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
-    Invoke-NodeScript -NodeArgs @('src/php-check.js', '--dry-run') -LogName 'php-check' -Title 'Check PHP versions'
-    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
-    Invoke-NodeScript -NodeArgs @('src/vuln-check.js') -LogName 'vuln-check' -Title 'Check known vulnerabilities'
-    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
-    Invoke-NodeScript -NodeArgs @('src/wp-mails-fetch.js', '--dry-run') -LogName 'wp-mails' -Title 'Check WordPress emails'
-    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+    Invoke-Step -NodeArgs @('src/update-plugins.js', '--dry-run') -LogName 'wp-check' -Title 'Check WordPress sites'
+    Invoke-Step -NodeArgs @('src/php-check.js', '--dry-run') -LogName 'php-check' -Title 'Check PHP versions'
+    Invoke-Step -NodeArgs @('src/vuln-check.js') -LogName 'vuln-check' -Title 'Check known vulnerabilities'
+    Invoke-Step -NodeArgs @('src/wp-mails-fetch.js', '--dry-run') -LogName 'wp-mails' -Title 'Check WordPress emails'
+  }
+  if ($Mode -in 'security', 'all') {
+    Invoke-Step -NodeArgs (Get-SecurityArgs) -LogName 'security-check' -Title 'Run security checks'
+  }
+  if ($Mode -eq 'secdry') {
+    Invoke-Step -NodeArgs (Get-SecurityArgs -Extra @('--dry-run')) -LogName 'security-check' -Title 'Check security (dry run)'
+  }
+  if ($Mode -eq 'secbaseline') {
+    $buildReport = $false
+    Invoke-Step -NodeArgs (Get-SecurityArgs -Extra @('--accept')) -LogName 'security-baseline' -Title 'Accept current state as security baseline'
   }
   if ($Mode -in 'dmarc', 'all') {
-    Invoke-NodeScript -NodeArgs @('src/dmarc-fetch.js') -LogName 'dmarc-check' -Title 'Process DMARC reports'
-    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+    Invoke-Step -NodeArgs @('src/dmarc-fetch.js') -LogName 'dmarc-check' -Title 'Process DMARC reports'
   }
   if ($Mode -eq 'dmarcdry') {
-    Invoke-NodeScript -NodeArgs @('src/dmarc-fetch.js', '--dry-run') -LogName 'dmarc-check' -Title 'Check DMARC reports'
-    $exitCode = [Math]::Max($exitCode, $script:SkillExit)
+    Invoke-Step -NodeArgs @('src/dmarc-fetch.js', '--dry-run') -LogName 'dmarc-check' -Title 'Check DMARC reports'
   }
 
-  $since = $runStart.ToUniversalTime().ToString('o')
-  $reportPath = & node src/build-report.js --since $since --mode $Mode --logs ($LogFiles -join ',')
-  if ($LASTEXITCODE -eq 0 -and $reportPath -and (Test-Path $reportPath)) {
-    Write-Output "==> Report: $reportPath"
-    Start-Process $reportPath
-  } else {
-    Write-Output '==> Could not build the HTML report.'
-    $exitCode = [Math]::Max($exitCode, 1)
+  if ($buildReport) {
+    $since = $runStart.ToUniversalTime().ToString('o')
+    $reportPath = & node src/build-report.js --since $since --mode $Mode --logs ($LogFiles -join ',')
+    if ($LASTEXITCODE -eq 0 -and $reportPath -and (Test-Path $reportPath)) {
+      Write-Output "==> Report: $reportPath"
+      Start-Process $reportPath
+    } else {
+      Write-Output '==> Could not build the HTML report.'
+      $exitCode = [Math]::Max($exitCode, 1)
+    }
   }
 } finally {
   Remove-OldFiles

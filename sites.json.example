@@ -9,6 +9,11 @@
       "siteUrl": "https://example.com",
       "cspFrameSrc": ["https://www.youtube.com"],
       "cspScriptSrcExtra": [],
+      "expectedAdmins": 1,
+      "allowedMuPlugins": [],
+      "dbScanAllowedDomains": [],
+      "expectXmlrpc": false,
+      "expectUserEnumeration": false,
       "sshPassword": "",
       "excludePlugins": [],
       "excludeThemes": []

@@ -1,6 +1,7 @@
 /**
  * Builds a self-contained HTML report from the JSON files a run leaves in
- * reports/: <ts>-wp-update, <ts>-php, <ts>-wp-mails, <ts>-dmarc and <ts>-vuln.
+ * reports/: <ts>-wp-update, <ts>-php, <ts>-wp-mails, <ts>-dmarc, <ts>-vuln and
+ * <ts>-security.
  *
  * Usage:
  *   node src/build-report.js [--since <ISO date>] [--mode <mode>] [--logs a,b]
@@ -64,7 +65,7 @@ function latest(name, since) {
 
 // ---- Action needed --------------------------------------------------------
 
-function collectActions(wp, php, mails, dmarc, vuln) {
+function collectActions(wp, php, mails, dmarc, vuln, sec) {
   const actions = [];
   if (wp) {
     for (const r of wp.data.results) {
@@ -153,6 +154,11 @@ function collectActions(wp, php, mails, dmarc, vuln) {
       actions.push(
         `${v.site}: ${v.kind} "${v.slug}" ${v.installedVersion} has a known vulnerability (${v.sources.join(', ') || 'see report'})${v.unfixed ? ' — no fix released' : v.fixedIn ? `, fixed in ${v.fixedIn}` : ''}.`
       );
+    }
+  }
+  if (sec && sec.data.results) {
+    for (const r of sec.data.results.filter(x => x.severity === 'alert')) {
+      actions.push(`${r.site}: security (${r.check}) - ${r.details}`);
     }
   }
   return actions;
@@ -469,6 +475,53 @@ function vulnSection(vuln) {
   return `<section><h2>Known vulnerabilities</h2><p class="muted">${esc(vuln.data.checked ?? 0)} unique plugin/theme slug(s) checked against <a href="https://www.wpvulnerability.net/">WPVulnerability.net</a>, ${flagged.length} flagged install(s).</p><table><thead><tr><th>Site</th><th>Kind</th><th>Slug</th><th>Installed</th><th>Fix</th><th>Sources</th></tr></thead><tbody>${rows}</tbody></table>${notChecked}${errors}</section>`;
 }
 
+function securitySection(sec) {
+  if (!sec) return '';
+  const results = sec.data.results || [];
+  if (results.length === 0) {
+    return '<section><h2>Security checks</h2><p class="muted">No results.</p></section>';
+  }
+  const sites = [...new Set(results.map(r => r.site))];
+  const rank = { alert: 3, warn: 2, info: 1, ok: 0 };
+  const blocks = sites.map(site => {
+    const mine = results.filter(r => r.site === site);
+    const worst = mine.reduce(
+      (w, r) => (rank[r.severity] > rank[w] ? r.severity : w),
+      'ok'
+    );
+    // Alerts and warnings go in the table; info is muted text; ok checks are
+    // collapsed into one line.
+    const rows = mine
+      .filter(r => rank[r.severity] >= rank.warn)
+      .sort((a, b) => rank[b.severity] - rank[a.severity])
+      .map(
+        r =>
+          `<tr class="${r.severity === 'alert' ? 'row-bad' : ''}"><td>${esc(r.check)}</td><td><span class="pill ${esc(r.severity)}">${esc(r.severity)}</span></td><td>${esc(r.details)}</td></tr>`
+      )
+      .join('');
+    const table = rows
+      ? `<table><thead><tr><th>Check</th><th>Severity</th><th>Details</th></tr></thead><tbody>${rows}</tbody></table>`
+      : '';
+    const checks = [...new Set(mine.map(r => r.check))];
+    const flagged = new Set(
+      mine.filter(r => rank[r.severity] >= rank.warn).map(r => r.check)
+    );
+    const okList = checks.filter(c => !flagged.has(c));
+    const okLine = okList.length
+      ? `<p class="muted">No issues: ${esc(okList.join(', '))}.</p>`
+      : '';
+    const info = mine
+      .filter(r => r.severity === 'info')
+      .map(r => `<li class="muted">${esc(r.check)}: ${esc(r.details)}</li>`)
+      .join('');
+    const infoBlock = info
+      ? `<details><summary class="muted">Details (${mine.filter(r => r.severity === 'info').length})</summary><ul>${info}</ul></details>`
+      : '';
+    return `<h3>${esc(site)} <span class="pill ${esc(worst)}">${esc(worst)}</span></h3>${table}${okLine}${infoBlock}`;
+  });
+  return `<section><h2>Security checks</h2><p class="muted">Checks: ${esc((sec.data.checks || []).join(', '))}${sec.data.dryRun ? ' &middot; dry run (baseline not updated)' : ''}</p>${blocks.join('')}</section>`;
+}
+
 // ---- Page -----------------------------------------------------------------
 
 const CSS = `
@@ -486,7 +539,7 @@ table{width:100%;border-collapse:collapse;font-size:14px;display:block;overflow-
 th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 .row-bad{background:var(--badbg)}
 .pill{font-size:12px;padding:1px 8px;border-radius:99px;border:1px solid var(--line);font-weight:600}
-.pill.ok{color:var(--ok)}.pill.partial,.pill.attention,.pill.attention-needed{color:var(--warn)}.pill.failed,.pill.unreachable,.pill.alert,.pill.act{color:var(--bad)}.pill.review{color:var(--warn)}.pill.discard{color:var(--muted)}
+.pill.ok{color:var(--ok)}.pill.partial,.pill.attention,.pill.attention-needed{color:var(--warn)}.pill.failed,.pill.unreachable,.pill.alert,.pill.act{color:var(--bad)}.pill.review,.pill.warn{color:var(--warn)}.pill.info{color:var(--muted)}.pill.discard{color:var(--muted)}
 .action{background:var(--badbg);border:1px solid var(--bad);border-radius:8px;padding:8px 16px}
 .stats{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 14px;min-width:110px}
@@ -494,18 +547,18 @@ th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);vertic
 footer{margin-top:32px;font-size:13px}
 `;
 
-function buildHtml({ wp, php, mails, dmarc, vuln }, opts, now) {
-  const actions = collectActions(wp, php, mails, dmarc, vuln);
+function buildHtml({ wp, php, mails, dmarc, vuln, sec }, opts, now) {
+  const actions = collectActions(wp, php, mails, dmarc, vuln, sec);
   const action = actions.length
     ? `<section class="action"><h2>Action needed</h2><ul>${actions.map(a => `<li>${esc(a)}</li>`).join('')}</ul></section>`
     : '';
   const status = actions.length ? 'ACTION NEEDED' : 'All clear';
-  const files = [wp, php, mails, dmarc, vuln]
+  const files = [wp, php, mails, dmarc, vuln, sec]
     .filter(Boolean)
     .map(f => esc(f.path))
     .concat(opts.logs.map(esc));
   const empty =
-    !wp && !mails && !dmarc
+    !wp && !mails && !dmarc && !sec
       ? '<p class="muted">No results were produced in this run.</p>'
       : '';
   return `<!doctype html>
@@ -514,7 +567,7 @@ function buildHtml({ wp, php, mails, dmarc, vuln }, opts, now) {
 <body><main>
 <h1>wordpressMonitor report</h1>
 <p class="muted">${esc(formatTimestamp(now))} &middot; mode: ${esc(opts.mode || 'n/a')} &middot; <strong>${status}</strong></p>
-${action}${empty}${wpSection(wp, php)}${vulnSection(vuln)}${mailsSection(mails)}${dmarcSection(dmarc)}
+${action}${empty}${wpSection(wp, php)}${vulnSection(vuln)}${securitySection(sec)}${mailsSection(mails)}${dmarcSection(dmarc)}
 <footer class="muted"><p>Files:</p><ul>${files.map(f => `<li>${f}</li>`).join('')}</ul></footer>
 </main></body></html>
 `;
@@ -527,7 +580,8 @@ function main() {
     php: latest('php', opts.since),
     mails: latest('wp-mails', opts.since),
     dmarc: latest('dmarc', opts.since),
-    vuln: latest('vuln', opts.since)
+    vuln: latest('vuln', opts.since),
+    sec: latest('security', opts.since)
   };
   const now = new Date();
   fs.mkdirSync(REPORTS_DIR, { recursive: true });

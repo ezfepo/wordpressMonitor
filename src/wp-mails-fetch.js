@@ -17,6 +17,7 @@ const gmail = require('./lib/gmail');
 const { decodeHeader, parseMessage } = require('./lib/mime');
 const { timestampSlug } = require('./lib/format');
 const { readConfig } = require('./lib/config');
+const unmatched = require('./lib/unmatched');
 
 const ROOT = path.resolve(__dirname, '..');
 const REPORTS = path.join(ROOT, 'reports');
@@ -522,6 +523,14 @@ async function main() {
   }
 
   fs.writeFileSync(outFile, JSON.stringify(out, null, 2));
+  // Accumulate mails no rule matched (also on dry runs: deduplicated by id).
+  try {
+    const run = path.basename(outFile).replace(/-wp-mails\.json$/, '');
+    const added = unmatched.record(out.mails, run);
+    if (added) console.log(`${added} new unmatched email(s) in the registry.`);
+  } catch (err) {
+    console.warn(`unmatched registry: ${err.message}`);
+  }
   const action = out.mails.filter(m => m.actionNeeded).length;
   console.log(
     `${out.mails.length} WordPress email(s), ${action} needing action, ${out.trashed.length} trashed${dryRun ? ' (dry run)' : ''}.`

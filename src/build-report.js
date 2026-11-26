@@ -13,6 +13,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { formatTimestamp, timestampSlug } = require('./lib/format');
+const unmatched = require('./lib/unmatched');
 
 const REPORTS_DIR = path.resolve(__dirname, '..', 'reports');
 
@@ -395,6 +396,30 @@ function mailsSection(mails) {
   return `<section><h2>WordPress emails</h2><p class="muted">${count('act')} to act on, ${count('review')} to review, ${count('discard')} safe to discard.</p>${blocks.join('')}</section>`;
 }
 
+// Accumulated registry of mails no rule matched (state/unmatched-mails.json):
+// recurring patterns are the candidates for a new rule.
+function unmatchedSection(mails) {
+  const registry = unmatched.load();
+  if (registry.entries.length === 0) return '';
+  const run = mails
+    ? path.basename(mails.path).replace(/-wp-mails\.json$/, '')
+    : null;
+  const rows = unmatched.summarize(registry);
+  const fresh = registry.entries.filter(e => e.run === run).length;
+  const recurringCount = rows.filter(r => r.count >= 2).length;
+  const body = rows
+    .map(r => {
+      const recurring = r.count >= 2;
+      const newCount = r.items.filter(e => e.run === run).length;
+      const badge = newCount
+        ? ` <span class="pill review">+${newCount} new</span>`
+        : '';
+      return `<tr class="${recurring ? 'row-bad' : ''}"><td>${esc(r.count)}${badge}</td><td>${esc(r.from)}<div class="muted">${esc(r.sample)}</div></td><td>${esc(r.sites.join(', '))}</td><td>${esc((r.firstSeen || '').slice(0, 10))} &rarr; ${esc((r.lastSeen || '').slice(0, 10))}</td><td>${recurring ? 'add a rule?' : 'watch'}</td></tr>`;
+    })
+    .join('');
+  return `<section><h2>Unmatched emails (rule candidates)</h2><p class="muted">${registry.entries.length} email(s) accumulated in ${rows.length} pattern(s); ${fresh} new in this run; ${recurringCount} recurring. Recurring patterns are worth a rule in src/wp-mails-fetch.js.</p><table><thead><tr><th>Count</th><th>Sender / sample subject</th><th>Sites</th><th>Seen</th><th>Suggestion</th></tr></thead><tbody>${body}</tbody></table></section>`;
+}
+
 function dmarcSection(dmarc) {
   if (!dmarc) return '';
   const d = dmarc.data;
@@ -567,7 +592,7 @@ function buildHtml({ wp, php, mails, dmarc, vuln, sec }, opts, now) {
 <body><main>
 <h1>wordpressMonitor report</h1>
 <p class="muted">${esc(formatTimestamp(now))} &middot; mode: ${esc(opts.mode || 'n/a')} &middot; <strong>${status}</strong></p>
-${action}${empty}${wpSection(wp, php)}${vulnSection(vuln)}${securitySection(sec)}${mailsSection(mails)}${dmarcSection(dmarc)}
+${action}${empty}${wpSection(wp, php)}${vulnSection(vuln)}${securitySection(sec)}${mailsSection(mails)}${unmatchedSection(mails)}${dmarcSection(dmarc)}
 <footer class="muted"><p>Files:</p><ul>${files.map(f => `<li>${f}</li>`).join('')}</ul></footer>
 </main></body></html>
 `;

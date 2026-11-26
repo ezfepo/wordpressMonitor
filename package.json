@@ -16,6 +16,7 @@
     "gmail:auth": "node src/gmail-auth.js",
     "dmarc:fetch": "node src/dmarc-fetch.js",
     "wp:mails": "node src/wp-mails-fetch.js",
+    "mails:backfill": "node src/backfill-unmatched-mails.js",
     "php:check": "node src/php-check.js",
     "vuln:check": "node src/vuln-check.js",
     "security:check": "node src/security-check.js",

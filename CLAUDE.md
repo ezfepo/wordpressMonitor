@@ -178,6 +178,16 @@ details}]}` (not written with `--accept`). `build-report.js` renders a "Security
   label `gmail.labels.wordpress`), which classifies Sucuri / Wordfence / Limit Login
   Attempts / core notices by rules (`kind`, `actionNeeded`, `site` from `sites.json`),
   writes `<ts>-wp-mails.json` and trashes the threads read (not with `--dry-run`).
+- **Unmatched-mail registry** (`src/lib/unmatched.js`): every mail `wp-mails-fetch.js` classifies as
+  `other` (no rule matched) is appended to `state/unmatched-mails.json` (gitignored, never purged;
+  `{version, entries:[{id, run, date, from, subject, site, pattern}]}`), on dry runs too — `id` =
+  hash of threadId+date+subject makes it idempotent. `pattern` = sender address + subject with IPs,
+  domains and numbers masked, so look-alike mails group together. `build-report.js` renders an
+  "Unmatched emails (rule candidates)" section (count per pattern, sites, first→last seen, "+N new"
+  for this run, `add a rule?` when a pattern has 2+ mails). When you add a rule for a pattern,
+  nothing else is needed: new mails stop being recorded, old entries stay as history.
+  `npm run mails:backfill` (`src/backfill-unmatched-mails.js [--dry-run]`) rebuilds the registry from
+  the `reports/*-wp-mails.json` files still on disk; safe to re-run.
 - `src/apply-headers.js [--site <name>] [--dry-run]` — writes each site's security headers
   (HSTS, nosniff, X-Frame-Options, Referrer-Policy, Permissions-Policy and one enforced
   Content-Security-Policy) into its `.htaccess`, between marker comments ("BEGIN/END
